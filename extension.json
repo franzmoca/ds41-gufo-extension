@@ -6,58 +6,170 @@
   "entry": "deepseek41flash_register",
   "registration_target": "gufo_deepseek41flash",
   "depends": [],
-  "platforms": ["linux"],
+  "platforms": [
+    "linux"
+  ],
   "providers": [
     {
       "id": "deepseek41",
       "capability": "text_generation",
-      "keys": ["gguf:deepseek41"],
-      "model_ids": ["DeepSeek V4.1 Flash"],
-      "speculative": ["dspark"],
-      "target": "gufo_deepseek41flash",
+      "keys": [
+        "gguf:deepseek41"
+      ],
+      "model_ids": [
+        "DeepSeek V4.1 Flash"
+      ],
+      "speculative": [
+        "dspark"
+      ],
+      "target": "gufo_deepseek41flash_text",
       "entry": "deepseek41flash_provider_register",
-      "serving": {"draft_options": {"dspark": "--dspark-model"}}
+      "serving": {
+        "draft_options": {
+          "dspark": "--dspark-model"
+        }
+      }
     }
   ],
   "options": [
     {
       "name": "--dspark-model",
       "type": "path",
-      "commands": ["serve", "bench", "prompt"],
-      "providers": ["deepseek41"],
+      "commands": [
+        "serve",
+        "bench",
+        "prompt"
+      ],
+      "providers": [
+        "deepseek41"
+      ],
       "help": "DSpark drafter GGUF for --speculative dspark"
     },
     {
       "name": "--prefill-batch",
       "type": "integer",
-      "commands": ["serve", "bench", "prompt"],
-      "providers": ["deepseek41"],
+      "commands": [
+        "serve",
+        "bench",
+        "prompt"
+      ],
+      "providers": [
+        "deepseek41"
+      ],
       "help": "Most prompt tokens per prefill batch, 16 to 4096 (default: 2048)"
     },
     {
       "name": "--exact-prefill",
       "type": "boolean",
-      "commands": ["serve", "bench", "prompt"],
-      "providers": ["deepseek41"],
+      "commands": [
+        "serve",
+        "bench",
+        "prompt"
+      ],
+      "providers": [
+        "deepseek41"
+      ],
       "help": "Run every decoder layer over every prompt token instead of each prompt's last 140"
     },
     {
       "name": "--stream-experts",
       "type": "boolean",
-      "commands": ["serve", "bench", "prompt"],
-      "providers": ["deepseek41"],
+      "commands": [
+        "serve",
+        "bench",
+        "prompt"
+      ],
+      "providers": [
+        "deepseek41"
+      ],
       "help": "Keep dense weights resident and stream routed experts from the SSD through a bounded cache"
     },
     {
       "name": "--expert-cache-bytes",
       "type": "integer",
-      "commands": ["serve", "bench", "prompt"],
-      "providers": ["deepseek41"],
+      "commands": [
+        "serve",
+        "bench",
+        "prompt"
+      ],
+      "providers": [
+        "deepseek41"
+      ],
       "help": "With --stream-experts: streamed expert cache bytes (default: what the sessions leave)"
     }
   ],
   "targets": {
-    "gufo_deepseek41flash": {"requires": []}
+    "gufo_deepseek41flash": {
+      "requires": []
+    },
+    "gufo_deepseek41flash_hip": {
+      "requires": [
+        "hip"
+      ]
+    },
+    "gufo_deepseek41flash_text": {
+      "requires": [
+        "hip"
+      ]
+    },
+    "deepseek41flash_chat_template_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_text_contract_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_vision_prompt_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_attention_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_candidate_mask_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_draft_sampling_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_expert_store_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_hc_state_pass_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_mmq_typed_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    }
   },
-  "licenses": ["LICENSE", "LICENSES/gufo.txt"]
+  "licenses": [
+    "LICENSE",
+    "LICENSES/gufo.txt",
+    "LICENSE.ds4"
+  ]
 }

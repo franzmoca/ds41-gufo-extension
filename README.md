@@ -3,9 +3,12 @@
 A Gufo source extension for DeepSeek V4.1 Flash (`deepseek41`) on Linux x86-64 /
 Strix Halo `gfx1151`.
 
-**Status:** in progress. This revision registers provider metadata only; use the
-[franzmoca/gufo](https://github.com/franzmoca/gufo) fork to run the model until
-the port is complete.
+**Status:** in progress, not yet published. Text generation, DSpark, vision, tool
+calls, the disk cache and `--stream-experts` run; parity against the
+[franzmoca/gufo](https://github.com/franzmoca/gufo) fork is not fully measured.
+
+**Files:** the IQ4_NL Engram only. MXFP8 Engrams and UD-IQ1_M do not open on the
+pinned Gufo, whose GGUF reader rejects them before the provider runs.
 
 Maintainer: Francesco Moca ([@franzmoca](https://github.com/franzmoca)).
 
