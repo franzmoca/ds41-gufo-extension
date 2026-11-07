@@ -297,6 +297,11 @@ public:
     deepseek.set_position(position);
   }
 
+  [[nodiscard]] bool CanContinue(const TextRunnerState& state,
+                                 std::size_t prompt_tokens) const override {
+    return RequireDeepSeekState(state).session().CanContinue(prompt_tokens);
+  }
+
   [[nodiscard]] TextRunnerDescriptor Descriptor() const override {
     // Speculative steps verify prompt-lookup copies, also without a drafter.
     return {
@@ -515,10 +520,12 @@ public:
       }
     }
     std::string error;
-    // `prompt` ends at this pass's frontier, a cache boundary or the prompt's
-    // end: the decoder layers replay the last tokens before it, so a
-    // checkpoint there continues every later prompt.
-    if (!deepseek.session().Sync(prefix, &error, prompt.size(), spans)) {
+    // The decoder layers run over the whole prompt's last tokens only, also
+    // when this step ends at a cache boundary: a capture there continues only
+    // prompts whose replay starts within the rows it holds (CanContinue).
+    const std::size_t prompt_end =
+        std::max(prompt.size(), state.prefill_prompt_end());
+    if (!deepseek.session().Sync(prefix, &error, prompt_end, spans)) {
       deepseek.set_position(0);
       throw std::runtime_error("DeepSeek prefill failed: " + error);
     }
