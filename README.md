@@ -13,7 +13,7 @@ the GGUF file names when a model does not load.
 > [!IMPORTANT]
 > **The port is in progress.** Until it finishes, the
 > [`feat/ds41-coder`](https://github.com/franzmoca/gufo/tree/feat/ds41-coder) branch
-> of the fork remains the complete version, including MXFP8 Engrams. Its
+> of the fork remains the complete version. Its
 > [docs](https://github.com/franzmoca/gufo/tree/feat/ds41-coder/docs/models/deepseek-v4.1-flash)
 > hold the benchmarks, quality reports, streaming design and experiments.
 
@@ -34,15 +34,14 @@ the GGUF file names when a model does not load.
 | ISTA GSQ-RCO `IQ2_XS` | 144.6 GiB | `--stream-experts` | Not yet run |
 | Unsloth `UD-IQ1_S` | 114.0 GiB | `--stream-experts` | Not yet run |
 
-Every build also needs an `IQ4_NL` Engram file (103 GiB) as its last shard, read
-from the SSD. The recommended drafter is Lucebox's
+Every build also needs an Engram file as its last shard, read from the SSD: ISTA's
+`IQ4_NL` (103 GiB) or Unsloth's `MXFP8` (189 GiB, decode about 8-10% slower on
+streamed `UD-IQ2_XXS`; prefill unchanged). The recommended drafter is Lucebox's
 `DSpark-draft-Q2K-Q4K` (4.6 GiB resident).
 
 ## Build
 
-The extension builds on the
-[`ds41-main`](https://github.com/franzmoca/gufo/tree/ds41-main) branch of the fork:
-Gufo plus the pending pull requests it needs.
+The extension needs Gufo's extension API 0.2.14 (upstream `main`).
 
 ```sh
 nix build   # in this repository: ./result/bin/gufo
@@ -51,7 +50,7 @@ nix build   # in this repository: ./result/bin/gufo
 Or without Nix, with [Gufo's prerequisites](https://github.com/gufo-org/gufo#build-from-source):
 
 ```sh
-git clone -b ds41-main https://github.com/franzmoca/gufo
+git clone https://github.com/gufo-org/gufo
 git clone https://github.com/franzmoca/ds41-gufo-extension
 cd gufo
 cmake --preset release -DGUFO_EXTENSION_DIRS="$PWD/../ds41-gufo-extension"
@@ -84,6 +83,10 @@ gufo serve llm \
 For image input, download `mmproj-DeepSeek-V4.1-Flash-1017-BF16.gguf` from the ISTA
 repository and add `--mmproj`.
 
+For the `MXFP8` Engram, download `engram/DeepSeek-V4.1-Flash-1017-engram-MXFP8.gguf_file`
+from the Unsloth repository and link it as the last shard in place of the `IQ4_NL`
+file. It also declares itself shard 6 of 6.
+
 | Option | Effect |
 | --- | --- |
 | `--dspark-model PATH` | DSpark drafter for `--speculative dspark` |
@@ -99,9 +102,9 @@ across restarts.
 
 ### Engram for `UD-IQ1_M` and `UD-IQ1_S`
 
-These builds have five shards, but the ISTA Engram file declares itself shard 6 of 6,
-so Gufo rejects a link to it. Download Unsloth's shard 5 with the other shards. It
-holds the same `IQ4_NL` tables (103 GiB).
+These builds have five shards, but the ISTA and `MXFP8` Engram files declare
+themselves shard 6 of 6, so Gufo rejects a link to them. Download Unsloth's shard 5
+with the other shards. It holds the same `IQ4_NL` tables (103 GiB).
 
 If you already have the ISTA file, change the shard numbers on a copy instead, in the
 directory that holds it:
@@ -200,13 +203,21 @@ expert cache, balanced order, average of two runs, November 7, 2026:
 | Decode, code (tok/s) | 28.5 | 28.7 |
 | Decode, long document (tok/s) | 27.3 | 26.9 |
 
+With the `MXFP8` Engram, on upstream `main`:
+
+| Greedy | This extension | Fork |
+| --- | ---: | ---: |
+| Prefill, 3.5K tokens (tok/s) | 589 | 586 |
+| Prefill, 24K tokens (tok/s) | 1,050 | 1,022 |
+| Decode, chat (tok/s) | 17.7 | 17.8 |
+| Decode, code (tok/s) | 25.9 | 26.0 |
+| Decode, long document (tok/s) | 24.9 | 25.4 |
+
 Generated text matches the fork on these requests. A smoke run also covered tool
 calls, images, concurrent requests and prompt-cache reuse.
 
 **Known gaps:**
 
-- MXFP8 Engrams do not open: Gufo's GGUF reader rejects them before the provider
-  runs.
 - Gufo's 64 cache transfer streams leave 0.2-0.6 GiB less expert cache than the fork.
 - Gufo's 4 GiB heap reserve can trim the prompt-cache backing at startup (seen once
   in four runs, 829 MiB instead of 1 GiB, with no speed change).

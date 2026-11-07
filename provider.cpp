@@ -37,6 +37,9 @@ void deepseek41flash_provider_register(gufo::ext::Registry& registry) {
       .prompt_driver = &ds41::RunDeepSeekPrompt,
       .chat_driver = &ds41::RunDeepSeekChat,
       .sampling_defaults = &ds41::ProbeSamplingDefaults,
+      // MXFP8 Engram tables (type 43): the runtime's own GGUF parser sizes
+      // and loads them.
+      .accepts_unsized_tensors = true,
       .speculative_defaults = {{.backend = "dspark",
                                 .max_draft_tokens = 7,
                                 .min_draft_tokens = 1}},

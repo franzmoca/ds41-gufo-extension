@@ -1019,8 +1019,8 @@ std::shared_ptr<ext::TextModelRunner> CreateDeepSeekTextRunner(
   std::shared_ptr<const core::GgufReader> reader = options.reader;
   if (!reader) {
     std::string load_error;
-    auto reader_owner =
-        core::GgufReader::OpenFile(options.model_path, &load_error);
+    auto reader_owner = core::GgufReader::OpenFile(
+        options.model_path, &load_error, {.allow_unsized_tensors = true});
     if (!reader_owner) {
       set_error("Failed to open GGUF: " + load_error);
       return nullptr;

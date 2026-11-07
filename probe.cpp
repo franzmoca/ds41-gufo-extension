@@ -20,7 +20,8 @@ bool ProbeDeepSeek41(std::string_view model_root) {
       return false;
     }
     std::string error;
-    const auto reader = core::GgufReader::OpenFile(path.string(), &error);
+    const auto reader = core::GgufReader::OpenFile(
+        path.string(), &error, {.allow_unsized_tensors = true});
     return reader != nullptr && ProbeDeepSeek41Gguf(*reader);
   } catch (...) {
     return false;
