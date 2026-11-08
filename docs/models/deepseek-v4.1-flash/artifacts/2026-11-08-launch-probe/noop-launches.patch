@@ -1,0 +1,48 @@
+diff --git a/kernels/rocm/ds41_v41.h b/kernels/rocm/ds41_v41.h
+index b484132..6cad679 100644
+--- a/kernels/rocm/ds41_v41.h
++++ b/kernels/rocm/ds41_v41.h
+@@ -358,6 +358,9 @@ int ds41_v41_argmax_rows(const float* x, uint32_t n, uint32_t rows, int32_t* tok
+  * (bias may be NULL), or -1 when none is finite. */
+ int ds41_v41_argmax_bias(const float* x, const float* bias, uint32_t n, int32_t* tokens, uint32_t index);
+ 
++/* Launch-cost probe (measurement only): count empty dependent launches. */
++int ds41_v41_noop_launches(uint32_t count);
++
+ #ifdef __cplusplus
+ }
+ #endif
+diff --git a/kernels/rocm/ds41_v41.hip.cpp b/kernels/rocm/ds41_v41.hip.cpp
+index c824b42..f42031a 100644
+--- a/kernels/rocm/ds41_v41.hip.cpp
++++ b/kernels/rocm/ds41_v41.hip.cpp
+@@ -3226,3 +3226,12 @@ extern "C" int ds41_v41_argmax_bias(const float* x, const float* bias, uint32_t
+   argmax_bias_kernel<<<1, 1024>>>(x, bias, n, tokens, index);
+   return launch_ok("argmax");
+ }
++
++/* Launch-cost probe (measurement only): `count` empty dependent launches on
++ * the legacy stream. */
++__global__ void ds41_noop_kernel() {}
++
++extern "C" int ds41_v41_noop_launches(uint32_t count) {
++  for (uint32_t i = 0; i < count; i++) ds41_noop_kernel<<<1, 64>>>();
++  return hipGetLastError() == hipSuccess ? 0 : 1;
++}
+diff --git a/runtime/v41_decode.cpp b/runtime/v41_decode.cpp
+index 3be8b78..57be99e 100644
+--- a/runtime/v41_decode.cpp
++++ b/runtime/v41_decode.cpp
+@@ -2138,7 +2138,12 @@ int eval_rows(ds41_decoder* d, const int* tokens, uint32_t n, uint32_t keep_from
+   d->window_floor = keep_from;
+   uint32_t rows = n;    // rows of the current layer
+   bool mixed = false;  // the previous block made this layer's attention mixes
++  static const uint32_t probe_launches = [] {
++    const char* v = getenv("DS41_PROBE_LAUNCHES");
++    return v ? (uint32_t)atoi(v) : 0u;
++  }();
+   for (uint32_t il = 0; il < DS41_N_LAYER && ok; il++) {
++    if (probe_launches && n <= DS41_DECODER_MAX_SPECULATIVE) ok = ds41_v41_noop_launches(probe_launches) == 0;
+     if (il == DS41_FIRST_DECODER_LAYER && skip) {
+       ok = replay_boundary(d, il, prev, skip, n);
+       rows = kept;
