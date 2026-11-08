@@ -30,7 +30,7 @@ the GGUF file names when a model does not load.
 | [ISTA GSQ-RCO](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF) `IQ2_XXS` | 128.7 GiB | `--stream-experts` | Measured |
 | [Unsloth](https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017-GGUF) `UD-IQ2_XXS` | 154.0 GiB | `--stream-experts` | Measured |
 | Unsloth `UD-IQ1_M` | 130.2 GiB | `--stream-experts` | Measured |
-| ISTA GSQ-RCO `IQ1_M` | 112.4 GiB | Resident | Runs, see known gaps |
+| ISTA GSQ-RCO `IQ1_M` | 112.4 GiB | Resident, or `--stream-experts` with vision | Measured |
 | ISTA GSQ-RCO `IQ2_XS` | 144.6 GiB | `--stream-experts` | Not yet run |
 | Unsloth `UD-IQ1_S` | 114.0 GiB | `--stream-experts` | Not yet run |
 
@@ -219,6 +219,21 @@ Decode varies more between runs than between the two builds: DSpark learns its d
 lengths from measured step times, and the expert cache size depends on the memory free
 at startup.
 
+With vision on, stream `IQ1_M` even though it fits resident. Resident `IQ1_M` with the
+drafter and the vision projector leaves under 1 GiB of GPU heap, so it prefills in
+smaller batches and keeps no prompt-cache checkpoints. Streaming trades some decode
+speed for faster prefill and working checkpoints (`IQ1_M`, `MXFP8` Engram, DSpark,
+vision, one session, average of two runs, balanced order, November 8, 2026):
+
+| Greedy | Resident | `--stream-experts` |
+| --- | ---: | ---: |
+| Prefill, 2.3K tokens (tok/s) | 1,032 | 1,183 (+15%) |
+| Prefill, 24K tokens (tok/s) | 977 | 1,282 (+31%) |
+| Repeat of the 24K-token prompt (s) | 24.6 | 0 (checkpoint) |
+| Decode, chat (tok/s) | 28.2 | 26.0 (-8%) |
+| Decode, code (tok/s) | 80.3 | 76.5 (-5%) |
+| Decode, long document (tok/s) | 37.2 | 35.8 (-4%) |
+
 Generated text matches the fork on these requests. A smoke run also covered tool
 calls, images, concurrent requests and prompt-cache reuse.
 
@@ -233,8 +248,8 @@ calls, images, concurrent requests and prompt-cache reuse.
 - Resident `IQ1_M` with the drafter and vision leaves under 1 GiB of GPU heap, so
   the same reserve leaves no room for prompt-cache checkpoints. A conversation that
   continues on its session still reuses it (24K-token history: next turn starts in
-  0.2 s), but repeats, edits and branches of earlier prompts prefill again; use a
-  streamed build when you need those.
+  0.2 s), but repeats, edits and branches of earlier prompts prefill again. Stream
+  it instead, as above.
 - Not yet run here: `gufo bench` and `gufo prompt`,
   `--exact-prefill`, the functional suites other than `reasoning-budget`, and the
   quality checks.
