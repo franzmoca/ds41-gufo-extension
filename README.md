@@ -1,96 +1,130 @@
 # DeepSeek V4.1 Flash for Gufo
 
-A [Gufo](https://github.com/gufo-org/gufo) source extension that runs
-DeepSeek-V4.1-Flash-1017, a 763B-parameter mixture-of-experts model, on one AMD
-Strix Halo (`gfx1151`) with 128 GB of unified memory on Linux. It includes DSpark
-drafting, prompt lookup, image input, tool calls, prompt caching and streaming of
-routed experts from the SSD.
+Run **DeepSeek-V4.1-Flash-1017**, a 763B-parameter mixture-of-experts model with a
+native 1M-token context, on a single AMD Strix Halo with 128 GB of unified memory.
 
-Maintainer: Francesco Moca ([@franzmoca](https://github.com/franzmoca)).
-[Report bugs here](https://github.com/franzmoca/ds41-gufo-extension/issues), with
-the GGUF file names when a model does not load.
+This is a [Gufo](https://github.com/gufo-org/gufo) source extension: it builds into
+Gufo's OpenAI-compatible server and CLI, with its own HIP kernels for `gfx1151`.
 
-This extension replaces the DeepSeek V4.1 engine of the
-[franzmoca/gufo](https://github.com/franzmoca/gufo) fork, which no longer receives
-DeepSeek changes. The [model docs](docs/models/deepseek-v4.1-flash/) moved here with
-it: benchmarks, quality reports, the streaming design, the backlog and every
-experiment. Their numbers were measured on the fork unless they say otherwise.
+- **Fits one machine.** `IQ1_M` and the expert-pruned Coder run fully resident.
+  The larger builds keep their dense weights resident and stream routed experts
+  from the SSD through a cache, optionally split across two drives.
+- **Fast decoding.** DSpark speculative decoding and prompt lookup, with greedy
+  output identical to plain decoding.
+- **A complete server.** Gufo's OpenAI-compatible text API with reasoning, native
+  tool calls (buffered and streamed), image input, concurrent sessions, and RAM and
+  disk prompt caching.
+
+| Greedy, one session, DSpark, vision | Prefill, 24K tokens | Decode, chat | Decode, long document | Decode, repetitive |
+| --- | ---: | ---: | ---: | ---: |
+| `IQ1_M`, resident | 977 tok/s | 28.2 tok/s | 37.2 tok/s | 84.7 tok/s |
+| `IQ1_M`, streamed | 1,282 tok/s | 26.0 tok/s | 35.8 tok/s | 83.4 tok/s |
+| `UD-IQ1_M`, streamed | 1,195 tok/s | 20.4 tok/s | 30.7 tok/s | 75.0 tok/s |
+| `UD-IQ2_XXS`, streamed | 1,050 tok/s | 17.8 tok/s | 25.2 tok/s | 67.2 tok/s |
+
+`MXFP8` Engram, November 2026. The repetitive answer copies a 1.8K-token passage,
+the case prompt lookup speeds up, as when a pasted file comes back edited. How these
+were measured, and the comparison with the engine this extension replaces, are in
+[docs/VALIDATION.md](docs/VALIDATION.md).
 
 > [!WARNING]
-> **Use a dedicated, headless machine.** The large builds leave about 2 GiB of host
-> memory free. A desktop, browser or other GPU workload can push the server or the
-> system out of memory.
+> **By default the model takes the whole machine.** Resident builds and streamed
+> builds with the default expert cache leave about 2 GiB of host memory free, so a
+> desktop, browser or other GPU workload can push the server or the system out of
+> memory. To share the machine, stream and cap the expert cache; see
+> [Leaving memory for other work](#leaving-memory-for-other-work).
+
+Maintainer: Francesco Moca ([@franzmoca](https://github.com/franzmoca)).
+[Report bugs here](https://github.com/franzmoca/ds41-gufo-extension/issues), with the
+GGUF file names when a model does not load.
 
 ## Models
 
-| Build | Backbone | Runs | On this extension |
-| --- | ---: | --- | --- |
-| [ISTA GSQ-RCO Coder](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-Coder-GGUF) `IQ2_XXS`, 192 of 384 experts | 67.2 GiB | Resident, about 44 GiB free | Measured |
-| [ISTA GSQ-RCO](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF) `IQ2_XXS` | 128.7 GiB | `--stream-experts` | Measured |
-| [Unsloth](https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017-GGUF) `UD-IQ2_XXS` | 154.0 GiB | `--stream-experts` | Measured |
-| Unsloth `UD-IQ1_M` | 130.2 GiB | `--stream-experts` | Measured |
-| ISTA GSQ-RCO `IQ1_M` | 112.4 GiB | Resident, or `--stream-experts` with vision | Measured |
-| ISTA GSQ-RCO `IQ2_XS` | 144.6 GiB | `--stream-experts` | Not yet run |
-| Unsloth `UD-IQ1_S` | 114.0 GiB | `--stream-experts` | Not yet run |
+| Build | Size | bpw, all | bpw, experts | Avg of 6 | Aider | Runs | Tested |
+| --- | ---: | ---: | ---: | ---: | ---: | --- | :---: |
+| [ISTA GSQ-RCO Coder](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-Coder-GGUF) `IQ2_XXS`, 192 of 384 experts | 67.2 GiB | 2.06 | 1.94 | – | – | Resident, about 44 GiB free | Yes |
+| [ISTA GSQ-RCO](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF) `IQ1_M` | 112.4 GiB | 1.75 | 1.69 | 81.78 | 29.78 | Resident; streamed with vision | Yes |
+| [Unsloth](https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017-GGUF) `UD-IQ1_S` | 114.0 GiB | 1.77 | 1.70 | 83.53 | 36.52 | `--stream-experts` | No |
+| [ISTA GSQ-RCO](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF) `IQ2_XXS` | 128.7 GiB | 2.00 | 1.94 | 83.68 | 36.52 | `--stream-experts` | Yes |
+| [Unsloth](https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017-GGUF) `UD-IQ1_M` | 130.2 GiB | 2.03 | 1.95 | 85.55 | 42.13 | `--stream-experts` | Yes |
+| [ISTA GSQ-RCO](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF) `IQ2_XS` | 144.6 GiB | 2.25 | 2.19 | 85.64 | 41.57 | `--stream-experts` | No |
+| [Unsloth](https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017-GGUF) `UD-IQ2_XXS` | 154.0 GiB | 2.40 | 2.31 | 86.63 | 44.38 | `--stream-experts` | Yes |
 
-Every build also needs an Engram file as its last shard, read from the SSD: ISTA's
-`IQ4_NL` (103 GiB) or Unsloth's `MXFP8` (189 GiB, decode about 8-10% slower on
-streamed `UD-IQ2_XXS`; prefill unchanged). The recommended drafter is Lucebox's
-`DSpark-draft-Q2K-Q4K` (4.6 GiB resident).
+Size and bits per weight exclude the Engram table; routed experts hold 97-99% of
+the weights. The Coder keeps `IQ2_XXS`'s expert quantization for half the experts,
+so its dense weights weigh more in its average. The scores are
+[Unsloth's benchmarks](https://unsloth.ai/docs/models/deepseek-v4.1-flash#full-benchmarking-methodologies): "Avg of 6" averages AIME25, HMMT Feb26, GPQA-D, MMLU-Pro,
+IFEval and LiveCodeBench v6 (temperature 1.0, 32K-token limit), and Aider is the
+Aider polyglot score. The 8-bit `UD-Q8_K_XL` reference averages 87.68. The Coder is
+not in them.
 
-## Build
+Besides the backbone, a server uses:
 
-The extension needs Gufo's extension API 0.2.14 (upstream `main`).
+- **An Engram table**, read from the SSD and never resident; see [Engram tables](#engram-tables).
+- **A DSpark drafter** for speculative decoding: Lucebox's
+  [`DSpark-draft-Q2K-Q4K`](https://huggingface.co/Lucebox/DeepSeek-V4.1-Flash-1017-ROCMFP-GGUF)
+  (4.6 GiB).
+- **The vision projector**, optional, for image input: ISTA's
+  [`mmproj-DeepSeek-V4.1-Flash-1017-BF16.gguf`](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF)
+  (0.9 GiB).
+
+With vision on, stream `IQ1_M` even though it fits resident: resident, it leaves
+too little GPU memory for prompt-cache checkpoints and prefills in smaller batches.
+Streaming it costs 2-8% of decode speed and gains 15-31% in prefill.
+
+## Quick start
+
+Build Gufo with the extension (it needs Gufo's extension API 0.2.14, upstream `main`):
 
 ```sh
-nix build   # in this repository: ./result/bin/gufo
+git clone https://github.com/franzmoca/ds41-gufo-extension
+cd ds41-gufo-extension
+nix build    # ./result/bin/gufo
 ```
 
-Or without Nix, with [Gufo's prerequisites](https://github.com/gufo-org/gufo#build-from-source):
+Without Nix, with [Gufo's prerequisites](https://github.com/gufo-org/gufo#build-from-source):
 
 ```sh
 git clone https://github.com/gufo-org/gufo
-git clone https://github.com/franzmoca/ds41-gufo-extension
 cd gufo
-cmake --preset release -DGUFO_EXTENSION_DIRS="$PWD/../ds41-gufo-extension"
+cmake --preset release -DGUFO_EXTENSION_DIRS=/path/to/ds41-gufo-extension
 cmake --build --preset release --parallel 4
 ```
 
-## Run
-
-Keep all files of a build in one directory. For example, streamed `UD-IQ2_XXS`:
+Download streamed `UD-IQ1_M` and the drafter, then serve it. Unsloth's builds include
+their Engram table as the last shard, so the download is complete as it is:
 
 ```sh
 mkdir ds41 && cd ds41
-hf download unsloth/DeepSeek-V4.1-Flash-1017-GGUF \
-  --include "UD-IQ2_XXS/*-0000[1-5]-of-00006.gguf" --local-dir .
-hf download ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF \
-  DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf --local-dir .
+hf download unsloth/DeepSeek-V4.1-Flash-1017-GGUF --include "UD-IQ1_M/*" --local-dir .
 hf download Lucebox/DeepSeek-V4.1-Flash-1017-ROCMFP-GGUF \
   DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf --local-dir .
-ln -s ../DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf \
-  UD-IQ2_XXS/DeepSeek-V4.1-Flash-1017-UD-IQ2_XXS-00006-of-00006.gguf
 
 gufo serve llm \
-  -m UD-IQ2_XXS/DeepSeek-V4.1-Flash-1017-UD-IQ2_XXS-00001-of-00006.gguf \
+  -m UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf \
   --stream-experts \
   --speculative dspark \
   --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf \
   --cache-disk ./cache --host 0.0.0.0 --port 8080
 ```
 
-For image input, download `mmproj-DeepSeek-V4.1-Flash-1017-BF16.gguf` from the ISTA
-repository and add `--mmproj`.
+ISTA publishes one Engram file for all its builds; download it with the shards and
+link it as the last one, for example for resident `IQ1_M`:
 
-For the `MXFP8` Engram, download `engram/DeepSeek-V4.1-Flash-1017-engram-MXFP8.gguf_file`
-from the Unsloth repository and link it as the last shard in place of the `IQ4_NL`
-file. It also declares itself shard 6 of 6.
+```sh
+hf download ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF \
+  --include "*IQ1_M-0000[1-5]-of-00006.gguf" DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf --local-dir .
+ln -s DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf \
+  DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00006-of-00006.gguf
+```
+
+Add `--mmproj mmproj-DeepSeek-V4.1-Flash-1017-BF16.gguf` for image input.
 
 | Option | Effect |
 | --- | --- |
-| `--dspark-model PATH` | DSpark drafter for `--speculative dspark` |
 | `--stream-experts` | Keep dense weights resident and stream routed experts from the SSD |
-| `--expert-cache-bytes N` | Expert cache size (default: the free memory, minus 2 GiB) |
+| `--expert-cache-bytes N` | Cap the expert cache; see [Leaving memory for other work](#leaving-memory-for-other-work) |
+| `--dspark-model PATH` | DSpark drafter for `--speculative dspark` |
 | `--prefill-batch N` | Most prompt tokens per prefill batch, 16 to 4096 (default: 2048) |
 | `--exact-prefill` | Run the decoder layers over every prompt token, at about half the prefill speed |
 
@@ -99,164 +133,151 @@ Useful Gufo options: `--context N` per session (default: the native 1M tokens),
 `--cache-ram-bytes N`, and `--cache-disk DIR`, which keeps prompt-cache checkpoints
 across restarts.
 
-### Engram for `UD-IQ1_M` and `UD-IQ1_S`
+**Bounded replay.** DeepSeek V4.1's layers 0-19 compute the shared KV that its
+decoder layers 20-39 read. By default a prompt runs the decoder layers only over its
+last 140 tokens: their 128-token attention window plus 12 tokens of backtracking,
+the same default as DeepSeek's own inference engine. The full KV is still computed
+for every token. `--exact-prefill` runs the decoder layers over the whole prompt;
+the next tokens' predictions barely change (254-255 of 256 top-1 matches, see
+[QUALITY.md](docs/models/deepseek-v4.1-flash/QUALITY.md#decoder-swa-bounded-replay-m5)).
 
-These builds have five shards, but the ISTA and `MXFP8` Engram files declare
-themselves shard 6 of 6, so Gufo rejects a link to them. Download Unsloth's shard 5
-with the other shards. It holds the same `IQ4_NL` tables (103 GiB).
+## Engram tables
 
-If you already have the ISTA or `MXFP8` file, change the shard numbers on a copy
-instead, in the directory that holds it. For `MXFP8`, use
-`DeepSeek-V4.1-Flash-1017-engram-MXFP8.gguf_file` in place of the ISTA file name:
+DeepSeek V4.1 adds Engram tables, an n-gram memory of 100-190 GiB that the model
+looks up for every token. Each build's last shard is its table, and Gufo reads the
+rows it needs from the SSD, so it takes no model memory.
+
+| Table | Size | Comes with | Decode |
+| --- | ---: | --- | --- |
+| `IQ4_NL` | 103 GiB | ISTA's builds; Unsloth's `UD-IQ1_M` and `UD-IQ1_S` | Baseline |
+| `Q5_K` | 126 GiB | Unsloth's `UD-IQ2_XXS` | Not measured |
+| `MXFP8` | 189 GiB | Unsloth's `engram/` folder, the checkpoint's own format | 8-10% slower |
+
+`MXFP8` is lossless. In the measurements it moves no task score and lowers
+perplexity slightly only on text the model has likely memorised
+([EVAL.md](docs/models/deepseek-v4.1-flash/EVAL.md)), but in daily use the model has
+felt better with it. If you have the disk space, try it and keep the one you prefer:
+download it from Unsloth's `engram/` folder and link it in place of the last shard. It
+is labelled shard 6 of 6, which fits the six-shard builds as it is; five-shard builds
+need the step below.
+
+### One table for several builds
+
+Builds can share one table file through links, which saves 100-190 GiB per build. A
+table also records its shard position, and a build whose shard count differs refuses
+it. Linking a 6-of-6 table into a five-shard build fails with:
+
+```text
+Failed to open GGUF: Inconsistent split GGUF shard metadata: .../DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00005-of-00005.gguf
+```
+
+Set the numbers the build expects with `tools/ds41/engram_split.py`, on a copy (free
+on Btrfs and XFS, a full copy elsewhere) or in place:
 
 ```sh
-# The script edits the file in place, so never run it on the original.
-# On Btrfs or XFS, --reflink uses no extra space; elsewhere this copies 103 GiB.
-cp --reflink=auto DeepSeek-V4.1-Flash-Engram-IQ4_NL.gguf Engram-IQ4_NL-shard5.gguf
-
-curl -LO https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017-GGUF/resolve/main/engram/set_split.py
-python3 set_split.py Engram-IQ4_NL-shard5.gguf 5 5
-
-ln -s ../Engram-IQ4_NL-shard5.gguf \
-  UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00005-of-00005.gguf
+python3 tools/ds41/engram_split.py DeepSeek-V4.1-Flash-1017-engram-MXFP8.gguf_file \
+  DeepSeek-V4.1-Flash-1017-engram-MXFP8-5of5.gguf --shard 5 --of 5
+python3 tools/ds41/engram_split.py DeepSeek-V4.1-Flash-1017-engram-MXFP8.gguf_file \
+  --in-place --shard 5 --of 5
 ```
+
+Only those two fields change. After an in-place change, every build that links the
+file must have that shard count.
+
+## Leaving memory for other work
+
+A streamed build's expert cache fills the free memory, minus 2 GiB, which is the
+fastest setting but leaves nothing for anything else. `--expert-cache-bytes N` caps
+it, and the rest stays free for a desktop, other models or other jobs. A smaller
+cache means more SSD reads: decode slows, and recovers as the cache learns which
+experts the current work routes to.
+
+Any build can stream, including the ones that fit resident. The Coder, streamed with
+the drafter and one session at a 32K context (`gufo bench`, tg128):
+
+| Expert cache | Decode |
+| --- | ---: |
+| All experts (61.5 GiB, the default) | 24.7 tok/s |
+| 30 GiB | 14.5 tok/s from a cold cache, 21.8 tok/s once warm |
+| 16 GiB | 8.1 tok/s cold, 12.8 tok/s warm |
+
+The dense weights, the drafter and the session stay resident in every case, so
+memory use is about 13 GiB plus the cap.
 
 ## Streaming and expert tails
 
-With `--stream-experts`, dense weights stay resident and routed experts are read
-from the SSD into a cache that fills the free memory, so free memory directly
-reduces disk reads. Streaming is never chosen automatically: a model that does not
-fit fails to load and states what it needs. The automatic RAM prompt cache is 1 GiB
-with `--cache-disk` and 3 GiB without, so the expert cache gets the rest.
+With `--stream-experts`, routed experts are read from the SSD into a cache that
+fills the free memory, so more free memory means fewer disk reads. Streaming is
+never chosen automatically: a build that does not fit fails to load and says what
+it needs. The automatic RAM prompt cache is 1 GiB with `--cache-disk` and 3 GiB
+without, and the expert cache gets the rest.
 
-**Put expert tails on a second NVMe if you have one.** When
-`MODEL.gguf.expert-tails` sits beside the first shard, as a file or a link, every
-expert read becomes a head read from the GGUF and a tail read from that file, queued
-together, so both drives work on each miss. Output does not change. Create it with
-this repository's tool, which needs Python 3 with NumPy:
+**A second NVMe drive helps.** Pack each expert's tail into a file on the second
+drive and link it beside the first shard as `MODEL.gguf.expert-tails`. Every expert
+read then becomes a head read from the GGUF and a tail read from that file, issued
+together, so both drives serve each miss. Output does not change.
 
 ```sh
 python3 tools/ds41/pack_expert_tails.py \
-  --model /path/to/ds41/UD-IQ2_XXS/DeepSeek-V4.1-Flash-1017-UD-IQ2_XXS-00001-of-00006.gguf \
-  --out /second-drive/UD-IQ2_XXS.expert-tails
-ln -s /second-drive/UD-IQ2_XXS.expert-tails \
-  /path/to/ds41/UD-IQ2_XXS/DeepSeek-V4.1-Flash-1017-UD-IQ2_XXS-00001-of-00006.gguf.expert-tails
+  --model UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf \
+  --out /second-drive/UD-IQ1_M.expert-tails
+ln -s /second-drive/UD-IQ1_M.expert-tails \
+  UD-IQ1_M/DeepSeek-V4.1-Flash-1017-UD-IQ1_M-00001-of-00005.gguf.expert-tails
 ```
 
-| Build | Tails file |
-| --- | ---: |
-| `IQ2_XXS` | 61.6 GiB |
-| `UD-IQ1_M` | 61.5 GiB |
-| `UD-IQ2_XXS` | 73.0 GiB |
+The tails file is 61.6 GiB for `IQ2_XXS`, 61.5 GiB for `UD-IQ1_M` and 73.0 GiB for
+`UD-IQ2_XXS`. With two PCIe 4.0 x4 drives a cold miss takes 0.87 ms instead of
+1.32-1.47 ms. The smaller the expert cache is against the model, the more it helps:
 
-Measured on the fork with two PCIe 4.0 x4 drives, one cold miss takes 0.87 ms instead
-of 1.32-1.47 ms, and six misses reach 10.7 GB/s. The smaller the expert cache is
-against the model, the more it helps:
-
-| Expert cache | Prefill gain | Decode gain |
+| Expert cache | Prefill | Decode |
 | --- | ---: | ---: |
-| About 100 GiB | 5-17% | 1-3% |
-| 88 GiB | 18-27% | 2-5% |
-| 64 GiB | 47-65% | 12-23% |
+| About 100 GiB | +5-17% | +1-3% |
+| 88 GiB | +18-27% | +2-5% |
+| 64 GiB | +47-65% | +12-23% |
 
-At load the engine checks the file against the model and, on any mismatch, logs why
-and reads only the GGUF. On btrfs the packer turns off copy-on-write for the file,
-which direct reads need. Details are in the
-[streaming design](docs/models/deepseek-v4.1-flash/STREAMING.md#split-reads-across-two-drives).
+At load the engine checks the file against the model; on any mismatch it logs why
+and reads only the GGUF. The
+[streaming design](docs/models/deepseek-v4.1-flash/STREAMING.md) has the details.
 
-## Memory
+## Memory and host setup
 
-Measured on the fork with resident `IQ1_M`, the native 1M context and one session:
+Resident `IQ1_M` at the native 1M context, one session:
 
 | Component | Memory |
 | --- | ---: |
 | Backbone | 112.3 GiB |
 | Session | 2.3 GiB |
-| DSpark drafter, Q2_K/Q4_K | 4.59 GiB |
-| Vision projector | 0.90 GiB |
-| Engram tables | 103 GiB on disk, not resident |
-| **Host memory left** with the drafter, server ready | **1.75 GiB** |
+| DSpark drafter | 4.6 GiB |
+| Vision projector | 0.9 GiB |
+| **Host memory left**, server ready | **1.7 GiB**, 1.6 GiB with vision |
 
-On this extension, streamed `UD-IQ2_XXS` with the drafter and vision projector has a
-95-96 GiB expert cache and about 2 GiB free, and the resident Coder build leaves about
-44 GiB free.
-
-## Host setup
+Streamed `UD-IQ2_XXS` with the drafter and vision gets a 95-96 GiB expert cache and
+leaves about 2 GiB free.
 
 - Set the UMA carve-out to its minimum in the firmware; the model lives in GTT.
-- Let the GPU map nearly all memory with
-  `amdgpu.gttsize=126976 ttm.pages_limit=32505856`. Then
-  `/sys/class/drm/card*/device/mem_info_gtt_total` should report about 133 GB.
+- Let the GPU map nearly all memory with `amdgpu.gttsize=126976 ttm.pages_limit=32505856`.
+  `/sys/class/drm/card*/device/mem_info_gtt_total` should then report about 133 GB.
 - `CmaFree` in `/proc/meminfo` should be near 0. On Ubuntu 26.04, boot with `kho=off`.
 - `ulimit -l unlimited` lets the prompt cache pin its memory.
 
-## Against the fork
+## Known limitations
 
-Streamed `UD-IQ2_XXS`, `IQ4_NL` Engram, DSpark, vision, one session, disk cache, cold
-expert cache, balanced order, average of two runs, November 7, 2026:
+- Resident `IQ1_M` with vision keeps no prompt-cache checkpoints. A conversation
+  that continues still reuses its session, but repeats, edits and branches of
+  earlier prompts prefill again. Stream it instead.
+- `UD-IQ1_S` and `IQ2_XS` have not been run.
 
-| Greedy | This extension | Fork |
-| --- | ---: | ---: |
-| Prefill, 3.5K tokens (tok/s) | 595 | 586 |
-| Prefill, 24K tokens (tok/s) | 1,045 | 1,041 |
-| Decode, chat (tok/s) | 19.4 | 19.4 |
-| Decode, code (tok/s) | 28.5 | 28.7 |
-| Decode, long document (tok/s) | 27.3 | 26.9 |
+## Documentation
 
-With the `MXFP8` Engram, on upstream `main` (decode averages four runs per build,
-November 7-8, 2026; prefill is one run):
-
-| Greedy | This extension | Fork |
-| --- | ---: | ---: |
-| Prefill, 3.5K tokens (tok/s) | 589 | 586 |
-| Prefill, 24K tokens (tok/s) | 1,050 | 1,022 |
-| Decode, chat (tok/s) | 17.8 | 17.9 |
-| Decode, code (tok/s) | 26.1 | 26.1 |
-| Decode, long document (tok/s) | 25.2 | 25.3 |
-
-Decode varies more between runs than between the two builds: DSpark learns its draft
-lengths from measured step times, and the expert cache size depends on the memory free
-at startup.
-
-With vision on, stream `IQ1_M` even though it fits resident. Resident `IQ1_M` with the
-drafter and the vision projector leaves under 1 GiB of GPU heap, so it prefills in
-smaller batches and keeps no prompt-cache checkpoints. Streaming trades some decode
-speed for faster prefill and working checkpoints (`IQ1_M`, `MXFP8` Engram, DSpark,
-vision, one session, average of two runs, balanced order, November 8, 2026):
-
-| Greedy | Resident | `--stream-experts` |
-| --- | ---: | ---: |
-| Prefill, 2.3K tokens (tok/s) | 1,032 | 1,183 (+15%) |
-| Prefill, 24K tokens (tok/s) | 977 | 1,282 (+31%) |
-| Repeat of the 24K-token prompt (s) | 24.6 | 0 (checkpoint) |
-| Decode, chat (tok/s) | 28.2 | 26.0 (-8%) |
-| Decode, code (tok/s) | 80.3 | 76.5 (-5%) |
-| Decode, long document (tok/s) | 37.2 | 35.8 (-4%) |
-
-Generated text matches the fork on these requests. On November 8, 2026 these also
-passed, on streamed `UD-IQ2_XXS` and the resident Coder with DSpark: Gufo's
-`conversation`, `tools`, `long-context`, `cache` (disk restart included), `image-inputs`
-and `tool-images` functional suites, the Pi coding-agent replay (7 of 7 tasks),
-`gufo prompt`, and `gufo bench` greedy, sampled and with `--exact-prefill`.
-
-**Known gaps:**
-
-- Gufo's 64 cache transfer streams take about 0.4 GiB more than the fork's 16. Streamed
-  builds get that much less expert cache, with no measurable speed change. Resident
-  `IQ1_M` with vision gets a 624-token prefill batch instead of 1,296, so a 24K-token
-  prompt prefills in 24.6 s instead of 20.4 s.
-- Gufo's 4 GiB heap reserve can trim the prompt-cache backing at startup (seen once
-  in four runs, 829 MiB instead of 1 GiB, with no speed change).
-- Resident `IQ1_M` with the drafter and vision leaves under 1 GiB of GPU heap, so
-  the same reserve leaves no room for prompt-cache checkpoints. A conversation that
-  continues on its session still reuses it (24K-token history: next turn starts in
-  0.2 s), but repeats, edits and branches of earlier prompts prefill again. Stream
-  it instead, as above.
-- The engine-against-oracle quality checks in [QUALITY.md](docs/models/deepseek-v4.1-flash/QUALITY.md)
-  use the fork's probe and tools, which are not part of this extension. Greedy text
-  matches the fork, so they were not repeated.
-
-Source layout and origin are in [UPSTREAM.md](UPSTREAM.md).
+- [Model docs](docs/models/deepseek-v4.1-flash/): benchmarks, quality, decode and
+  prefill analysis, the streaming design, the backlog and every experiment. This
+  extension continues the DeepSeek V4.1 engine of the
+  [franzmoca/gufo](https://github.com/franzmoca/gufo) fork, where most of those
+  numbers were measured.
+- [Validation](docs/VALIDATION.md): this extension's test results.
+- [Tools](tools/README.md): model-file tools, streaming simulators, references and
+  kernel benchmarks.
+- [UPSTREAM.md](UPSTREAM.md): source layout and origin.
 
 ## License
 

@@ -32,6 +32,11 @@ from it. The V4 engine itself stays unchanged.
   (`src/models/qwen/hip/ops/gemm.hpp`).
 - `continuation_adapter.cpp` connects the decoder state to the component
   continuation cache.
+- `tools/` holds the model-file tools, streaming simulators, CPU references and
+  kernel benchmarks ([tools/README.md](tools/README.md)). `tools/gufo/gguf.py` and
+  `tools/bench/build.sh` are copied unchanged from Gufo `0fb50ce4`.
+- `docs/models/deepseek-v4.1-flash/` holds the model documentation and its
+  measurement artifacts.
 
 DeepSeek kernels are private to this package: a change here must not alter
 another model's output or performance.
