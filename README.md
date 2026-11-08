@@ -10,12 +10,11 @@ Maintainer: Francesco Moca ([@franzmoca](https://github.com/franzmoca)).
 [Report bugs here](https://github.com/franzmoca/ds41-gufo-extension/issues), with
 the GGUF file names when a model does not load.
 
-> [!IMPORTANT]
-> **The port is in progress.** Until it finishes, the
-> [`feat/ds41-coder`](https://github.com/franzmoca/gufo/tree/feat/ds41-coder) branch
-> of the fork remains the complete version. Its
-> [docs](https://github.com/franzmoca/gufo/tree/feat/ds41-coder/docs/models/deepseek-v4.1-flash)
-> hold the benchmarks, quality reports, streaming design and experiments.
+This extension replaces the DeepSeek V4.1 engine of the
+[franzmoca/gufo](https://github.com/franzmoca/gufo) fork, which no longer receives
+DeepSeek changes. The [model docs](docs/models/deepseek-v4.1-flash/) moved here with
+it: benchmarks, quality reports, the streaming design, the backlog and every
+experiment. Their numbers were measured on the fork unless they say otherwise.
 
 > [!WARNING]
 > **Use a dedicated, headless machine.** The large builds leave about 2 GiB of host
@@ -163,7 +162,7 @@ against the model, the more it helps:
 At load the engine checks the file against the model and, on any mismatch, logs why
 and reads only the GGUF. On btrfs the packer turns off copy-on-write for the file,
 which direct reads need. Details are in the
-[streaming design](https://github.com/franzmoca/gufo/blob/feat/ds41-coder/docs/models/deepseek-v4.1-flash/STREAMING.md#split-reads-across-two-drives).
+[streaming design](docs/models/deepseek-v4.1-flash/STREAMING.md#split-reads-across-two-drives).
 
 ## Memory
 
@@ -234,8 +233,11 @@ vision, one session, average of two runs, balanced order, November 8, 2026):
 | Decode, code (tok/s) | 80.3 | 76.5 (-5%) |
 | Decode, long document (tok/s) | 37.2 | 35.8 (-4%) |
 
-Generated text matches the fork on these requests. A smoke run also covered tool
-calls, images, concurrent requests and prompt-cache reuse.
+Generated text matches the fork on these requests. On November 8, 2026 these also
+passed, on streamed `UD-IQ2_XXS` and the resident Coder with DSpark: Gufo's
+`conversation`, `tools`, `long-context`, `cache` (disk restart included), `image-inputs`
+and `tool-images` functional suites, the Pi coding-agent replay (7 of 7 tasks),
+`gufo prompt`, and `gufo bench` greedy, sampled and with `--exact-prefill`.
 
 **Known gaps:**
 
@@ -250,9 +252,9 @@ calls, images, concurrent requests and prompt-cache reuse.
   continues on its session still reuses it (24K-token history: next turn starts in
   0.2 s), but repeats, edits and branches of earlier prompts prefill again. Stream
   it instead, as above.
-- Not yet run here: `gufo bench` and `gufo prompt`,
-  `--exact-prefill`, the functional suites other than `reasoning-budget`, and the
-  quality checks.
+- The engine-against-oracle quality checks in [QUALITY.md](docs/models/deepseek-v4.1-flash/QUALITY.md)
+  use the fork's probe and tools, which are not part of this extension. Greedy text
+  matches the fork, so they were not repeated.
 
 Source layout and origin are in [UPSTREAM.md](UPSTREAM.md).
 
