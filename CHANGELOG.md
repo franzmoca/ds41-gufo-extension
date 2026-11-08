@@ -12,6 +12,9 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   4-7% faster and code up to 7.5% faster on streamed builds, with identical
   output; sampled decoding is unchanged
   ([E99](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e99--greedy-dspark-reset-the-policy-per-request-probes-set-the-saving-retained)).
+* **dspark:** the drafter's attention reads its keys once per head instead of
+  once per head and row, 4× faster; drafting cycles take ~1% less time
+  ([E102](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e102--dspark-attention-one-block-per-head-retained)).
 
 ## 0.1.0 (2026-11-08)
 

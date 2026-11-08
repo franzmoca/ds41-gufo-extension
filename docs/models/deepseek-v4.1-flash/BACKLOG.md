@@ -43,7 +43,7 @@ follow in their own sections.
 | 9 | 40 | FP16 Q for prefill attention | ~1% of prefill (E53 estimate) | Write Q in FP16 from the `q_b` epilogue |
 | 10 | 22 | Decode misses after a long prompt | First 64 tokens after a 24K prompt read 2-3× the steady rate | Admission variants over the first 64-256 steps |
 | 11 | 39 | Expert cache seed from served text | Fresh server: 74-78% hits and ~24 ms/token of read wait for the first 64 tokens | Histogram from served chat and code traces |
-| 12 | 38 | Drafter pass | 9.18 ms per drafting cycle; request-vocabulary head +1.1% greedy in replay (E64) | Tabulate stage bandwidth; vocabulary head |
+| 12 | 38 | Drafter pass | 9.15 ms per drafting cycle (E102); stage Q4_K GEMVs at 113-181 GB/s; request-vocabulary head +1.1% greedy in replay (E64) | 6-row Q4_K GEMVs; vocabulary head |
 | 13 | 19 | Host work and round trips per step | ~0.7 ms per DSpark step (2026-10-29), 0.43-0.49 ms per AR greedy step | Logits download only when needed; device embedding |
 | 14 | 29 | Zero-copy expert reads | ≤ ~1.5% of kernel time at an 88 GiB cap; first version slower | Slack from `STATX_DIOALIGN`, contiguous stage |
 | 15 | 17 | Single-row routed expert GEMV bandwidth | Routed GEMVs at 205-220 GB/s against 240 | ISA mix and spill check |
@@ -198,9 +198,12 @@ request. Matters for benchmarks and short sessions only.
 
 ### 38. Drafter pass
 
-Per drafting cycle (DECODE.md lever 7): target head over the drafted rows
-2.54 ms, `markov_select` 1.48 ms at ~92% of the read ceiling (E47), stage
-GEMVs ~1.9 ms and drafter experts ~1.5 ms, with no bandwidth table yet. A
+Per drafting cycle (DECODE.md lever 7, table in E102): 9.15 ms, of it the
+target head over the drafted rows 2.58 ms at 210 GB/s, `markov_select`
+1.48 ms at 223 GB/s (E47), the stage Q4_K GEMVs 1.76 ms at 113-181 GB/s
+(~0.5 ms below 215 GB/s), drafter experts 1.49 ms (bytes not traced) and
+attention 3 × 41 µs isolated after E102 (not yet re-traced). Next: the 6-row Q4_K GEMVs, then an
+expert count for the routed share. A
 request-vocabulary head (as Qwen's `draft_vocab.hpp`, with a fallback to
 the full vocabulary after misses; the verifier keeps it) gains +1.1% only
 with the specials and a request table; the id prefix alone loses (E64). It
