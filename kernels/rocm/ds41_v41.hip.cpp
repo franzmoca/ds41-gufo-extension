@@ -2391,6 +2391,117 @@ __global__ void dspark_attention_kernel(const float* q, const float* ring, uint3
   }
 }
 
+/* Block = one head and all n_block <= kMaxT queries: the queries share every
+ * key, so the block reads each key row once for all of them. head_dim is a
+ * multiple of 128 (float4 per lane); the output phase interleaves the keys
+ * over four thread groups and sums their partials. */
+template <uint32_t kMaxT>
+__global__ void __launch_bounds__(512)
+    dspark_attention_head_kernel(const float* q, const float* ring, uint32_t first, uint32_t n_ring, uint32_t window,
+                                 const float* block_kv, uint32_t n_block, const float* sinks, float* out,
+                                 uint32_t heads, uint32_t head_dim, float scale) {
+  extern __shared__ float smem[];
+  const uint32_t head = blockIdx.x;
+  const uint32_t n = n_ring + n_block;
+  const uint32_t dim4 = head_dim / 4;
+  float4* qs = (float4*)smem;                   // [n_block][dim4], later partial sums
+  float* scores = smem + n_block * head_dim;        // [n_block][n]
+  float* inv = scores + n_block * n;                // [n_block]
+  auto key = [&](uint32_t j) {
+    return (const float4*)(j < n_ring ? ring + (uint64_t)((first + j) % window) * head_dim
+                                      : block_kv + (uint64_t)(j - n_ring) * head_dim);
+  };
+  for (uint32_t i = threadIdx.x; i < n_block * dim4; i += blockDim.x) {
+    const uint32_t t = i / dim4, d = i % dim4;
+    qs[i] = ((const float4*)(q + ((uint64_t)t * heads + head) * head_dim))[d];
+  }
+  __syncthreads();
+  const uint32_t warps = blockDim.x / warpSize;
+  const uint32_t warp = threadIdx.x / warpSize;
+  const uint32_t lane = threadIdx.x % warpSize;
+  for (uint32_t j = warp; j < n; j += warps) {
+    const float4* k = key(j);
+    float dot[kMaxT] = {};
+    for (uint32_t d = lane; d < dim4; d += warpSize) {
+      const float4 kd = k[d];
+#pragma unroll
+      for (uint32_t t = 0; t < kMaxT; t++)
+        if (t < n_block) {
+          const float4 qd = qs[t * dim4 + d];
+          dot[t] += qd.x * kd.x + qd.y * kd.y + qd.z * kd.z + qd.w * kd.w;
+        }
+    }
+#pragma unroll
+    for (uint32_t t = 0; t < kMaxT; t++) {
+      if (t >= n_block) break;
+      float v = dot[t];
+      for (int o = warpSize / 2; o > 0; o >>= 1) v += __shfl_xor(v, o);
+      if (lane == 0) scores[t * n + j] = v * scale;
+    }
+  }
+  __syncthreads();
+  for (uint32_t t = warp; t < n_block; t += warps) {
+    float* row = scores + t * n;
+    float m = sinks[head];
+    for (uint32_t j = lane; j < n; j += warpSize) m = fmaxf(m, row[j]);
+    for (int o = warpSize / 2; o > 0; o >>= 1) m = fmaxf(m, __shfl_xor(m, o));
+    float sum = 0.0f;
+    for (uint32_t j = lane; j < n; j += warpSize) {
+      const float e = expf(row[j] - m);
+      row[j] = e;
+      sum += e;
+    }
+    for (int o = warpSize / 2; o > 0; o >>= 1) sum += __shfl_xor(sum, o);
+    if (lane == 0) inv[t] = 1.0f / (sum + expf(sinks[head] - m));
+  }
+  __syncthreads();
+  constexpr uint32_t kParts = 4;
+  const uint32_t part = threadIdx.x / dim4;
+  const uint32_t d = threadIdx.x % dim4;
+  float4 acc[kMaxT];
+#pragma unroll
+  for (uint32_t t = 0; t < kMaxT; t++) acc[t] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+  if (part < kParts)
+    for (uint32_t j = part; j < n; j += kParts) {
+      const float4 kd = key(j)[d];
+#pragma unroll
+      for (uint32_t t = 0; t < kMaxT; t++)
+        if (t < n_block) {
+          const float p = scores[t * n + j];
+          acc[t].x += p * kd.x;
+          acc[t].y += p * kd.y;
+          acc[t].z += p * kd.z;
+          acc[t].w += p * kd.w;
+        }
+    }
+  for (uint32_t from = 1; from < kParts; from++) {
+    if (part == from)
+#pragma unroll
+      for (uint32_t t = 0; t < kMaxT; t++)
+        if (t < n_block) qs[t * dim4 + d] = acc[t];
+    __syncthreads();
+    if (part == 0)
+#pragma unroll
+      for (uint32_t t = 0; t < kMaxT; t++)
+        if (t < n_block) {
+          const float4 o = qs[t * dim4 + d];
+          acc[t].x += o.x;
+          acc[t].y += o.y;
+          acc[t].z += o.z;
+          acc[t].w += o.w;
+        }
+    __syncthreads();
+  }
+  if (part == 0)
+#pragma unroll
+    for (uint32_t t = 0; t < kMaxT; t++)
+      if (t < n_block) {
+        const float s = inv[t];
+        ((float4*)(out + ((uint64_t)t * heads + head) * head_dim))[d] =
+            make_float4(acc[t].x * s, acc[t].y * s, acc[t].z * s, acc[t].w * s);
+      }
+}
+
 __global__ void hc_mean_kernel(const float* h, float* out, uint64_t out_stride, uint32_t hc, uint32_t dim) {
   const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
   const uint32_t t = blockIdx.y;
@@ -3169,6 +3280,13 @@ extern "C" int ds41_v41_dspark_attention(const float* q, const float* ring, uint
                                          float scale) {
   const size_t shared = (size_t)(n_ring + n_block) * sizeof(float);
   if (n_ring > window || shared > 60 * 1024) return 1;
+  constexpr uint32_t kMaxT = 8;
+  const size_t head_shared = ((size_t)n_block * (head_dim + n_ring + n_block) + n_block) * sizeof(float);
+  if (n_block <= kMaxT && head_dim == 512 && head_shared <= 60 * 1024) {
+    dspark_attention_head_kernel<kMaxT><<<heads, 512, head_shared>>>(q, ring, first, n_ring, window, block_kv, n_block,
+                                                                     sinks, out, heads, head_dim, scale);
+    return launch_ok("dspark attention");
+  }
   dspark_attention_kernel<<<dim3(heads, n_block), kThreads, shared>>>(q, ring, first, n_ring, window, block_kv,
                                                                       n_block, sinks, out, heads, head_dim, scale);
   return launch_ok("dspark attention");

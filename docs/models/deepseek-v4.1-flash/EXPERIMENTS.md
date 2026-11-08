@@ -135,6 +135,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E99](#e99--greedy-dspark-reset-the-policy-per-request-probes-set-the-saving-retained) | DSpark/speculation | retained | Greedy probes set `gain_ms` to their own saving and each request resets the policy: streamed chat +4-7%, code +2-7.5%, outputs identical; sampled unchanged. |
 | [E100](#e100--decode-prediction-every-layer-with-non-blocking-retire-rejected) | streaming | rejected | All-hit prepares retire prefetch jobs without waiting, plus every-layer decode prediction: read wait −1 ms/token but +60% SSD reads and a router pass per layer; decode unchanged, greedy code −3%. |
 | [E101](#e101--untraced-cost-of-a-dependent-decode-launch-measured) | decode pipeline | measured | Empty dependent launches added per layer: 1.2-1.9 µs each untraced; a step's ~986 launches cost 2-3.4%, one fusion ~0.1%. |
+| [E102](#e102--dspark-attention-one-block-per-head-retained) | DSpark/speculation | retained | Drafter pass bandwidth table; DSpark attention reads the shared keys once per head (162 → 41 µs isolated): sampled long +0.9% on identical drafts, greedy unchanged within noise, outputs identical. |
 
 ## Milestones
 
@@ -3700,6 +3701,55 @@ launch. One launch fewer per layer saves ~0.05-0.08 ms per step
 (~0.1%), so single fusions are below the measurement floor, and a
 persistent per-layer kernel could gain at most ~3% before its own grid
 barriers.
+
+## E102 — DSpark attention: one block per head (retained)
+
+BACKLOG item 38 asked for a bandwidth table of the drafter pass. Streamed
+`UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision; rocprofv3 trace of the
+`proflong` chat and code requests, 671 drafter passes from the last
+verification kernel to the last `argmax_bias`: 9.15 ms per pass (p10 8.96,
+p90 10.15), 8.57 ms of it busy.
+
+| Kernels | ms per pass | Read per call | GB/s |
+| --- | ---: | ---: | ---: |
+| Target head, Q6_K over the drafted rows | 2.58 | 543 MB | 210 |
+| `markov_select` × 5, F16 W2 | 1.48 | 66.2 MB | 223 |
+| Stage Q4_K GEMVs, 6 rows × 3 stages | 1.76 | 91.1 MB per stage | 155 |
+| Routed experts, Q2_K, top-3 of 128 | 1.49 | not traced | — |
+| `dspark_attention` × 3 | 0.60 | ~0.3 MB of keys | — |
+| `dflash.fc`, Q4_K | ~0.21 | 44.2 MB | 196-218 |
+| hc mixes, F32 router, norms, copies | ~0.45 | | |
+
+Per stage, the Q4_K GEMVs read `q_a` (3.7 MB) at 142 GB/s, `kv` (1.5 MB) at
+113, `q_b` (23.6 MB) at 160, `output_a` (18.9 MB) at 181, `output_b`
+(23.6 MB) at 159, the shared expert's gate and up (13.3 MB) at 134 and its
+down (6.6 MB) at 133: ~0.5 ms per pass below 215 GB/s. The F32 router
+reads 2.6 MB at ~70 GB/s and each hc mix 1 MB at ~47 GB/s (~0.2 ms in all).
+
+The attention kernel ran one block per (head, block row), 320 blocks that
+each read the whole 128-row key window, although every head and row shares
+one KV head. It now runs one block per head over all block rows (up to 8,
+head size 512), with float4 key loads and the output phase's keys split
+over four thread groups; other shapes keep the old kernel. Isolated
+(`attention_test`, 128 ring rows, 5 block rows): 162 → 41 µs. The test's
+reference error falls from 7.1e-7 to 2.5e-7.
+
+The same requests as E99, `decode0` greedy and `decode2` sampled at the
+server defaults, order base, new, new, base, tok/s:
+
+| Request | Base | New | Base |
+| --- | --- | --- | --- |
+| greedy chat | 18.30, 18.93 | 18.73, 19.35 | |
+| greedy code | 26.90, 27.10 | 26.91, 27.00 | |
+| greedy long | 25.38, 25.46 | 25.36, 25.50 | |
+| sampled long | 25.46, 25.47 | 25.73, 25.64 | |
+| sampled chat | 19.61, 19.74 | 19.92, 19.94 | |
+
+Greedy outputs are identical; greedy chat follows the policy's run-to-run
+spread (E99). Sampled long keeps identical text and drafts: 100.5 → 99.7 ms
+per cycle, +0.9%. Sampled chat and code take another random path with the
+new rounding (chat drafts 461 → 455; the code reply diverges after its
+first paragraph), so they are not matched; chat is +1.4%.
 
 ## Backlog measurements without an E-number
 
