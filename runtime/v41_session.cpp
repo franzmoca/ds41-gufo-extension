@@ -559,13 +559,19 @@ ds41_dspark_draft_request draft_request(Cycle& c) {
 /* After a learned cycle that drafted: gain_ms follows the time its draft
  * saved, the emitted tokens' time as plain steps minus the cycle's time after
  * the draft (zero when it verified none). A joint cycle's time is not its
- * own, so it counts the saving its width predicted. A draft that did not pay
+ * own, so it counts the saving its width predicted. A probe (a draft while
+ * gain_ms did not exceed draft_ms) sets gain_ms to its own saving: averaged
+ * into the stale estimate, a probe that paid lifted it only to about
+ * draft_ms, and steps 1 ms slower kept drafting off. A draft that did not pay
  * starts or doubles the probe interval; one that did resets it. */
 void learned_outcome(ds41_session* s, const Cycle& c, uint32_t emitted, std::chrono::steady_clock::time_point t2) {
   auto& p = s->policy;
   float gain = 0.0f;
   if (c.tail != 0) gain = c.shared ? c.gain : emitted * p.cycle_ms[0] - ms(c.t1, t2);
-  ema(p.gain_ms, gain, kGainRate);
+  if (p.gain_ms > p.draft_ms)
+    ema(p.gain_ms, gain, kGainRate);
+  else
+    p.gain_ms = gain;
   if (p.gain_ms > p.draft_ms) {
     p.probe = ds41_session::kProbeFirst;
   } else if (p.plain >= p.probe) {

@@ -107,8 +107,9 @@ Every DeepSeek V4.1 decode goes through the speculative step (`DecodeStep`
    otherwise sets the draft width. Greedy with the confidence head
    (`c.learned`): full width while the learned saving of a draft
    (`gain_ms`) exceeds the drafter pass (`draft_ms`), else none, with
-   probes (E87). Sampled: full width. Neither: `draft_width`. Drafted widths
-   are cut after drafting.
+   probes that set `gain_ms` to their own saving (E87, E99); the policy
+   restarts with each request. Sampled: full width. Neither: `draft_width`.
+   Drafted widths are cut after drafting.
 2. **draft** (`ds41_dspark_draft_batch`): embeds and uploads the anchor and
    noise rows, runs three drafter stages, the target's output head over the
    drafted rows, five sequential Markov selections (66 MB FP16 W2 each) and

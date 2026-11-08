@@ -504,6 +504,11 @@ public:
     if (offset >= prompt.size()) {
       throw std::logic_error("DeepSeek prefill has no remaining input");
     }
+    // A prompt prefilled from its start is a new request, like one that
+    // reuses a prefix (PreparePrefixReuse): its draft policy starts afresh.
+    if (offset == 0) {
+      deepseek.session().BeginRequest();
+    }
 
     const std::size_t consumed =
         std::min<std::size_t>({max_input_tokens, prompt.size() - offset,

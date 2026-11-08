@@ -132,6 +132,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E96](#e96--streamed-expert-pruned-coder-retained) | streaming | retained | GSQ-RCO Coder with `--stream-experts`: kept-expert seed ranking, scores byte-identical to resident; default cache at resident speed (tg128 24.72 against 24.61), 30 GiB cache 14.5 tok/s cold. |
 | [E97](#e97--direction-adapters-retained) | features | retained | Direction adapters (`--adapter`): mako files and rank-1 LoRAs as exact projections; bit-identical without one; 3K perplexity within ±0.002 nats, KL 0.012-0.015; decode −0.5 to −0.9%. |
 | [E98](#e98--lora-adapters-retained) | features | retained | LoRA adapters (`--adapter`, `adapter.type = lora`) on `attn_output_b`, `ffn_down_shexp` and per-expert `ffn_down_exps`; bit-identical without one; L22 abliteration LoRA 3K KL 0.012, heretic 0.018. Decode −1.6% (heretic) to −3.2% (L22), prefill −1.3% to −2.9%. |
+| [E99](#e99--greedy-dspark-reset-the-policy-per-request-probes-set-the-saving-retained) | DSpark/speculation | retained | Greedy probes set `gain_ms` to their own saving and each request resets the policy: streamed chat +4-7%, code +2-7.5%, outputs identical; sampled unchanged. |
 
 ## Milestones
 
@@ -3579,6 +3580,66 @@ resident one (tg64 hashes, also without an adapter); streamed pp2048/tg64
 1,341 / 24.98 without, 1,299 / 23.48 with it (one run each).
 
 Refusal rates were not measured here.
+
+## E99 — greedy DSpark: reset the policy per request, probes set the saving (retained)
+
+Streamed `IQ1_M` decoded chat about 11% slower than resident (26.0-26.4
+against 29.1 tok/s on a 1,024-token story), with identical per-step times:
+plain steps 40.2 ms, one-draft cycles 50-51 ms, two-draft cycles
+60.5-61.8 ms (`GUFO_DEEPSEEK41_DSPARK_TRACE`). A rocprofv3 kernel trace
+of the same decode shows equal GPU busy time (36.5 s) on both; dispatches
+over 5× their kernel's median add 5-181 ms, under 0.5%, so the single
+135 ms dispatch of the earlier 256-token trace does not recur as a cost.
+The difference is the E87 policy: streamed ran 542-681 plain steps and
+resident 163-170.
+
+Two causes:
+- **Probes could not restart drafting.** While `gain_ms` ≤ `draft_ms`,
+  probes re-measure the saving, but averaged it in at `kGainRate` 0.25:
+  from a near-zero estimate a paying one-draft probe (2 × 40.4 − 50 ≈
+  31 ms) reached ~8.2-8.5 against `draft_ms` 8.3. Resident steps passed
+  that bar, and streamed steps, ~1 ms slower from expert reads, did not;
+  the probe interval then doubled toward 64. A probe now sets `gain_ms` to
+  its own saving; outside probes it is still averaged.
+- **The policy carried across requests.** The server reset it
+  (`BeginRequest`) only when a request reused a cached prefix. A prompt
+  prefilled from its start inherited the previous request's acceptance,
+  `gain_ms` and probe interval, as well as prompt lookup's request start.
+  `Prefill` now begins a request at offset 0. In one base run the code
+  request inherited a stalled state from the chat and decoded at 24.1
+  against 26.2 tok/s.
+
+Served greedy, `MXFP8` Engram, DSpark, vision, one session; chat, code and
+the 24K document in one session, 512 tokens each; base, reset only, reset
+and probe, in balanced order, two runs each; outputs identical across all
+builds:
+
+| tok/s | Chat | Code | Long |
+| --- | --- | --- | --- |
+| `UD-IQ2_XXS` streamed, base | 18.2, 17.8 | 24.1, 26.2 | 25.7, 25.3 |
+| reset only | 18.9, 18.3 | 26.5, 26.8 | 25.4, 25.4 |
+| reset and probe | 19.3, 18.1 | 27.1, 27.0 | 25.3, 25.3 |
+| `IQ1_M` streamed, base | 25.7, 26.0 | 76.6, 76.5 | 36.6, 36.6 |
+| reset only | 25.8, 25.7 | 78.1, 78.1 | 36.4, 36.6 |
+| reset and probe | 27.8, 27.7 | 77.8, 78.5 | 36.7, 36.8 |
+| `IQ1_M` resident, base | 27.8, 26.8 | 80.4, 81.1 | 36.9, 36.9 |
+| reset only | 27.2, 28.7 | 80.6, 80.7 | 38.8, 37.1 |
+| reset and probe | 29.0, 29.1 | 80.5, 80.5 | 37.2, 37.0 |
+
+With both changes, chat is 4-7% faster and code 2-7.5% faster on the
+streamed builds; no request is more than 0.9% slower. The probe change
+alone, without the reset, made `UD-IQ2_XXS` code slower (24.5 against
+26.2 tok/s in three of four runs): a probe that measured a negative saving
+at the end of the chat set `gain_ms` to −8.4, and the code request
+inherited it with a 64-step probe interval.
+
+Sampled DSpark always drafts at full width, so only the reset reaches it
+(prompt lookup's request start). At the server's sampling defaults
+(temperature 1.0, top-p 1.0, seed 1234) both streamed builds return the
+same text with the same draft and acceptance counts as before, two runs
+each in balanced order: `UD-IQ2_XXS` chat / code / long 19.8 / 21.75 /
+25.5 → 19.7 / 21.8 / 25.4 tok/s, `IQ1_M` 28.15 / 76.8 / 35.45 →
+28.15 / 76.55 / 35.5.
 
 ## Backlog measurements without an E-number
 
