@@ -94,10 +94,11 @@ because every prepare then resolves a running job (stop handshake, read
 remainder, bookkeeping: ~0.1 ms per layer, ~4 ms per cycle). Two layers
 ahead predicts fewer misses than one (E89). This is also the route toward
 Belady's optimum (−47.9% / −53.5% decode misses, E92), which past-use
-eviction rules cannot approach. Step: let a hit layer's prepare adopt
-finished reads and leave the rest running, measure what remains, then
-re-enable E89's `predict_hot` rule; undrained adoption for short prompt
-passes was within noise (E72). Gate: 3K decode scores bit-identical.
+eviction rules cannot approach. E100 made the hit layers' resolution free
+and re-enabled `predict_hot`: read wait fell ~1 ms per token, but the
+extra router passes and 60% more SSD reads cancelled it. What remains is
+the prediction's own cost: a cheaper predictor (fewer router rows, or
+only the layers that miss most) or a more selective trigger.
 
 ### 31. Eviction scoring and prompt admission
 

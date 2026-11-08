@@ -1,0 +1,185 @@
+diff --git a/runtime/expert_store.cpp b/runtime/expert_store.cpp
+index b8dd70e..da1291f 100644
+--- a/runtime/expert_store.cpp
++++ b/runtime/expert_store.cpp
+@@ -305,8 +305,12 @@ public:
+     pf_run_ = false;
+     pf_stop_ = false;
+     resolving_ = false;
++    const bool retired = retiring_;  // dropped by an all-hit prepare
++    retiring_ = false;
+     pf_->taken = pf_next_;
+-    if (pf_->layer == layer && !pf_->failed.load() && (adopt_wide || !pf_->wide))
++    if (retired)
++      *dropped_bytes += pf_->bytes.load();
++    else if (pf_->layer == layer && !pf_->failed.load() && (adopt_wide || !pf_->wide))
+       job = pf_;  // its un-run, routed tasks join the phase
+     else if (pf_->layer == layer + 1 && !pf_->failed.load())
+       parked_ = pf_;  // the next layer's parity half is free; resume after
+@@ -360,6 +364,27 @@ public:
+     return overlap_ok && !phase_failed_.load();
+   }
+ 
++  /* A prepare whose routes all hit runs no phase. A job for the next layer
++   * keeps running: its parity half is not one this layer's kernels read.
++   * Any other job (this layer's, whose experts were not routed, or one
++   * overtaken) stops taking tasks without waiting for those in flight; the
++   * last of them to land retires it, unless a Resolve or a submission is
++   * already waiting to (both drain in-flight tasks before reusing rows).
++   * Waiting here instead put up to a whole expert read and a phase handshake
++   * on every hit layer while decode predicted every layer (E89). */
++  void Retire(uint32_t layer) {
++    std::lock_guard lock(mutex_);
++    if (!pf_run_ || pf_stop_ || resolving_)
++      return;
++    if (pf_->layer == layer + 1 && !pf_->failed.load())
++      return;
++    pf_stop_ = true;
++    if (pf_inflight_ == 0)
++      FinishRetire();
++    else
++      retiring_ = true;
++  }
++
+   /* Time the last phase blocked on its reads after the overlapped work. */
+   uint64_t last_wait_ns() const { return last_wait_ns_; }
+ 
+@@ -387,6 +412,7 @@ public:
+       pf_idle_.wait(lock, [this] { return pf_inflight_ == 0; });
+       pf_stop_ = false;
+       resolving_ = false;
++      retiring_ = false;
+       orphaned_.fetch_add(pf_->bytes.load());
+     }
+     pf_ = std::move(job);
+@@ -415,6 +441,17 @@ public:
+   uint64_t buffered_reads() const { return buffered_reads_.load(); }
+ 
+ private:
++  /* Drops a stopped job with nothing in flight; the mutex is held. */
++  void FinishRetire() {
++    orphaned_.fetch_add(pf_->bytes.load());
++    pf_.reset();
++    pf_next_ = 0;
++    pf_run_ = false;
++    pf_stop_ = false;
++    retiring_ = false;
++    pf_idle_.notify_all();
++  }
++
+   void ReleaseResources() {
+     for (uint32_t i = 0; i < kReadWorkers; ++i) {
+       if (events_[i])
+@@ -510,8 +547,11 @@ private:
+           --pf_inflight_;
+           if (!ok && task->job_failed)
+             task->job_failed->store(true);
+-          if (pf_stop_ && pf_inflight_ == 0)
++          if (pf_stop_ && pf_inflight_ == 0) {
++            if (retiring_ && !resolving_)
++              FinishRetire();
+             pf_idle_.notify_all();
++          }
+         }
+       }
+     }
+@@ -529,6 +569,7 @@ private:
+   std::atomic<bool> phase_failed_{false};
+   std::shared_ptr<PrefetchJob> pf_, pending_, parked_;
+   bool pf_run_ = false, pf_stop_ = false, resolving_ = false;
++  bool retiring_ = false;  // stopped by Retire, tasks still in flight
+   size_t pf_next_ = 0;
+   uint32_t pf_inflight_ = 0;
+   uint32_t parked_workers_ = 0;
+@@ -1699,9 +1740,11 @@ bool ds41_expert_store_prepare(ds41_expert_store* store, uint32_t layer,
+   std::shared_ptr<PrefetchJob> adopted;
+   uint64_t dropped = 0;
+   uint64_t trace_demand = 0, trace_adopted = 0, trace_read_wait = 0;
+-  const bool phase = misses || !store->readers->Idle();
++  const bool phase = misses != 0;
+   if (phase)
+     adopted = store->readers->Resolve(layer, n_tokens >= kSweepTokens, &dropped);
++  else
++    store->readers->Retire(layer);
+   store->stats.bytes_read += dropped;
+   store->stats.prefetch_dropped_bytes += dropped;
+   /* Map every expert of the layer to its weights: the cache slot when
+diff --git a/runtime/v41_decode.cpp b/runtime/v41_decode.cpp
+index 3be8b78..e0f38e8 100644
+--- a/runtime/v41_decode.cpp
++++ b/runtime/v41_decode.cpp
+@@ -379,6 +379,7 @@ struct ds41_decoder : Activations {
+   hipEvent_t pred_events[DS41_N_LAYER] = {};
+   bool pred_ok = true;
+   bool pass_missed = false;  // a layer of this eval waited on expert reads
++  bool prev_missed = false;  // a layer of the previous eval_rows call did
+   /* Layers this eval runs: a prompt batch whose rows all stop at the replay
+    * boundary ends at the first decoder layer, and predicts nothing past it. */
+   uint32_t pass_end = DS41_N_LAYER;
+@@ -1070,9 +1071,10 @@ bool shared_moe(ds41_decoder* d, const ds41_layer_weights* l, uint32_t n, const
+  * ids into a background read the next layer's prepare adopts, skipping the
+  * experts the batch does not route. Called from the read overlap, where the
+  * extra matvec hides in the read stall. Single tokens and verification or
+- * joint batches predict only when this layer waited on reads: misses
+- * cluster in neighbouring layers, and a prediction without a stall to hide
+- * it costs more than the read it saves. Larger batches predict once any
++ * joint batches predict when this layer waited on reads (misses cluster in
++ * neighbouring layers), and at every layer while the previous evaluation
++ * waited on reads: misses spread over all layers, and a layer whose routes
++ * all hit retires an unneeded job without waiting for it (E100). Larger batches predict once any
+  * layer of the same evaluation has waited on reads, including the prompt's
+  * decoder replay: their layers then keep missing, and a stale prediction's
+  * extra reads still arrive before they are needed. A model whose experts
+@@ -1132,9 +1134,10 @@ void predict_next_layer(ds41_decoder* d, uint32_t il, uint32_t n, bool misses_no
+   if (!d->engine->expert_store || !d->pred_ok || il + 1 >= d->pass_end)
+     return;
+   d->pass_missed = d->pass_missed || misses_now;
+-  if (n < kPrefillPredictTokens && !d->pass_missed)
++  const bool hot = n <= DS41_DECODER_MAX_JOINT && d->prev_missed;
++  if (n < kPrefillPredictTokens && !d->pass_missed && !hot)
+     return;
+-  if (n <= DS41_DECODER_MAX_JOINT && !misses_now)
++  if (n <= DS41_DECODER_MAX_JOINT && !misses_now && !hot)
+     return;
+   predict_layer(d, il + 1, n);
+ }
+@@ -1999,6 +2002,7 @@ int eval_rows(ds41_decoder* d, const int* tokens, uint32_t n, uint32_t keep_from
+       d->pos + n > d->context || d->spec_n)
+     return 1;
+   d->resident_logits = 0;
++  d->prev_missed = d->pass_missed;
+   d->pass_missed = false;
+   const uint32_t pos0 = d->pos;
+   const uint32_t skip = std::clamp(keep_from, pos0, pos0 + n) - pos0;
+diff --git a/tests/expert_store_test.cpp b/tests/expert_store_test.cpp
+index 8d35847..6101f9f 100644
+--- a/tests/expert_store_test.cpp
++++ b/tests/expert_store_test.cpp
+@@ -303,6 +303,27 @@ int main() {
+             stats.prefetch_bytes == 2 * kSlot,
+         "dropped bytes never counted as consumed");
+   ds41_expert_store_destroy(store);
++  // A prepare whose routes all hit runs no phase: it drops a job predicted
++  // for its own layer without adopting it, and the next prepare counts the
++  // job's bytes as dropped, never as consumed.
++  store = ds41_expert_store_create(&f.model, &f.weights, 8 * kSlot);
++  check(store && run(0, {0, 1, 2, 3, 1, 2}) && run(1, {0, 1, 0, 1, 0, 1}) &&
++            run(2, {0, 0, 0, 0, 0, 0}) && run(0, {0, 1, 2, 3, 1, 2}),
++        "retire setup stage bytes");
++  const auto retire_base = ds41_expert_store_get_stats(store);
++  check(ds41_expert_store_prefetch(store, 1, first, 2) && idle(store),
++        "prefetch for an all-hit layer submits and drains");
++  check(run(1, {0, 1, 0, 1, 0, 1}) && idle(store), "all-hit layer stage bytes");
++  check(run(2, {0, 0, 0, 0, 0, 0}), "layer after the retire stage bytes");
++  stats = ds41_expert_store_get_stats(store);
++  check(stats.prefetch_dropped_bytes - retire_base.prefetch_dropped_bytes ==
++                2 * kSlot &&
++            stats.prefetch_bytes == retire_base.prefetch_bytes &&
++            stats.bytes_read - retire_base.bytes_read == 2 * kSlot &&
++            stats.hits - retire_base.hits == 12,
++        "all-hit prepare drops its layer's prefetch");
++  check(run(1, {5, 9, 5, 9, 5, 9}), "dropped experts read on demand");
++  ds41_expert_store_destroy(store);
+   // A prefill-scale (wide) prefetch stages a large expert set that a
+   // batch-scale prepare adopts without rereading; a small batch drops it.
+   store = ds41_expert_store_create(&f.model, &f.weights, 4 * kSlot);

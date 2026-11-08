@@ -133,6 +133,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E97](#e97--direction-adapters-retained) | features | retained | Direction adapters (`--adapter`): mako files and rank-1 LoRAs as exact projections; bit-identical without one; 3K perplexity within ±0.002 nats, KL 0.012-0.015; decode −0.5 to −0.9%. |
 | [E98](#e98--lora-adapters-retained) | features | retained | LoRA adapters (`--adapter`, `adapter.type = lora`) on `attn_output_b`, `ffn_down_shexp` and per-expert `ffn_down_exps`; bit-identical without one; L22 abliteration LoRA 3K KL 0.012, heretic 0.018. Decode −1.6% (heretic) to −3.2% (L22), prefill −1.3% to −2.9%. |
 | [E99](#e99--greedy-dspark-reset-the-policy-per-request-probes-set-the-saving-retained) | DSpark/speculation | retained | Greedy probes set `gain_ms` to their own saving and each request resets the policy: streamed chat +4-7%, code +2-7.5%, outputs identical; sampled unchanged. |
+| [E100](#e100--decode-prediction-every-layer-with-non-blocking-retire-rejected) | streaming | rejected | All-hit prepares retire prefetch jobs without waiting, plus every-layer decode prediction: read wait −1 ms/token but +60% SSD reads and a router pass per layer; decode unchanged, greedy code −3%. |
 
 ## Milestones
 
@@ -3640,6 +3641,40 @@ same text with the same draft and acceptance counts as before, two runs
 each in balanced order: `UD-IQ2_XXS` chat / code / long 19.8 / 21.75 /
 25.5 → 19.7 / 21.8 / 25.4 tok/s, `IQ1_M` 28.15 / 76.8 / 35.45 →
 28.15 / 76.55 / 35.5.
+
+## E100 — decode prediction every layer with non-blocking retire (rejected)
+
+BACKLOG item 37. A prepare whose routes all hit no longer runs a phase: a
+job for the next layer keeps running, any other job stops taking tasks
+and is retired by its last in-flight read instead of the prepare waiting
+for it (`ReadPool::Retire`; `expert_store_test` covers the drop and its
+accounting). On top of that, decode and verification batches again
+predicted every layer while the previous evaluation waited on reads (E89's
+`predict_hot`). Patch:
+[retire-and-hot.patch](artifacts/2026-11-08-prefetch-retire/retire-and-hot.patch).
+
+Streamed `UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision, one session; chat,
+code and the 24K document, 512 tokens each, greedy and at the server's
+sampling defaults (seed 1234); main, retire only (A), retire and
+every-layer prediction (B) in balanced order, two runs each; outputs
+identical across builds:
+
+| tok/s | Chat | Code | Long |
+| --- | --- | --- | --- |
+| Greedy, main | 18.4, 18.1 | 27.0, 27.2 | 25.6, 25.3 |
+| Greedy, A | 19.3, 18.7 | 26.8, 27.2 | 25.4, 25.0 |
+| Greedy, B | 18.6, 18.7 | 26.3, 26.2 | 25.4, 24.8 |
+| Sampled, main | 19.7, 19.6 | 21.7, 21.8 | 25.4, 25.5 |
+| Sampled, A | 19.7, 19.8 | 21.8, 21.7 | 25.5, 25.5 |
+| Sampled, B | 19.8, 19.7 | 21.6, 21.5 | 25.4, 25.4 |
+
+Steady intervals (≥ 97% route hits, ~2,800 greedy tokens per build): read
+wait 4.01 / 3.90 / 3.00 ms per token, reads 47.9 / 47.3 / 76.6 MiB per
+token, route wait 25.3 / 24.3 / 25.4 ms. B removes about 1 ms of read wait
+per token but pays a router pass per layer (30 µs in `prefetch_sim`, not
+timed here) and 60% more SSD traffic beside the demand reads; decode does
+not gain, and greedy code loses 3%. A alone changes neither waits nor reads; its greedy chat figure
+is within the policy's run-to-run spread (E99). Reverted.
 
 ## Backlog measurements without an E-number
 
