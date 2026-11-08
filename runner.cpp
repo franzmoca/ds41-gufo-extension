@@ -49,6 +49,15 @@ constexpr std::size_t kStreamedDiskRamShareBytes = std::size_t{1} << 30;
 // What the host's backing commits before readiness.
 constexpr std::size_t kBackingGrowAheadBytes = std::size_t{2} << 30;
 
+// The RAM cache's host limit. The host keeps a fixed reserve above it, which
+// resident IQ1_M with the drafter and vision does not leave (about 4 GiB free
+// after the sessions), so the host would refuse the load. The automatic budget,
+// half the RAM still available, may use that reserve; it shrinks as the
+// backing commits, so the host keeps at least as much as the cache takes.
+std::size_t CacheCeilingBytes() {
+  return std::max(HostSnapshotCeilingBytes(), HostSnapshotBudgetBytes());
+}
+
 bool IsSha256Hex(std::string_view value) noexcept {
   return value.size() == 64 && std::ranges::all_of(value, [](char character) {
            return (character >= '0' && character <= '9') ||
@@ -262,7 +271,7 @@ public:
         model_, max_context_, component_identity_, use_dspark_);
     auto resources = hip::CreateHipComponentCacheResources(
         std::move(adapter), ledger,
-        {[] { return ext::HostSnapshotCeilingBytes(); },
+        {[] { return CacheCeilingBytes(); },
          [](std::string_view message) {
            server::Logger::Warn("cache", message);
          },
@@ -339,7 +348,7 @@ public:
             snapshot_budget_cap_
                 ? std::min(HostSnapshotBudgetBytes(), snapshot_budget_cap_)
                 : HostSnapshotBudgetBytes(),
-        .retained_snapshot_ceiling_bytes = HostSnapshotCeilingBytes(),
+        .retained_snapshot_ceiling_bytes = CacheCeilingBytes(),
         .requires_device_runtime_lock = true,
     };
   }

@@ -29,8 +29,8 @@ the GGUF file names when a model does not load.
 | [ISTA GSQ-RCO Coder](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-Coder-GGUF) `IQ2_XXS`, 192 of 384 experts | 67.2 GiB | Resident, about 44 GiB free | Measured |
 | [ISTA GSQ-RCO](https://huggingface.co/ISTA-DASLab/DeepSeek-V4.1-Flash-1017-GSQ-RCO-GGUF) `IQ2_XXS` | 128.7 GiB | `--stream-experts` | Measured |
 | [Unsloth](https://huggingface.co/unsloth/DeepSeek-V4.1-Flash-1017-GGUF) `UD-IQ2_XXS` | 154.0 GiB | `--stream-experts` | Measured |
-| Unsloth `UD-IQ1_M` | 130.2 GiB | `--stream-experts` | Runs, see below |
-| ISTA GSQ-RCO `IQ1_M` | 112.4 GiB | Resident | Not yet run |
+| Unsloth `UD-IQ1_M` | 130.2 GiB | `--stream-experts` | Measured |
+| ISTA GSQ-RCO `IQ1_M` | 112.4 GiB | Resident | Runs, see known gaps |
 | ISTA GSQ-RCO `IQ2_XS` | 144.6 GiB | `--stream-experts` | Not yet run |
 | Unsloth `UD-IQ1_S` | 114.0 GiB | `--stream-experts` | Not yet run |
 
@@ -106,8 +106,9 @@ These builds have five shards, but the ISTA and `MXFP8` Engram files declare
 themselves shard 6 of 6, so Gufo rejects a link to them. Download Unsloth's shard 5
 with the other shards. It holds the same `IQ4_NL` tables (103 GiB).
 
-If you already have the ISTA file, change the shard numbers on a copy instead, in the
-directory that holds it:
+If you already have the ISTA or `MXFP8` file, change the shard numbers on a copy
+instead, in the directory that holds it. For `MXFP8`, use
+`DeepSeek-V4.1-Flash-1017-engram-MXFP8.gguf_file` in place of the ISTA file name:
 
 ```sh
 # The script edits the file in place, so never run it on the original.
@@ -223,10 +224,18 @@ calls, images, concurrent requests and prompt-cache reuse.
 
 **Known gaps:**
 
-- Gufo's 64 cache transfer streams leave 0.2-0.6 GiB less expert cache than the fork.
+- Gufo's 64 cache transfer streams take about 0.4 GiB more than the fork's 16. Streamed
+  builds get that much less expert cache, with no measurable speed change. Resident
+  `IQ1_M` with vision gets a 624-token prefill batch instead of 1,296, so a 24K-token
+  prompt prefills in 24.6 s instead of 20.4 s.
 - Gufo's 4 GiB heap reserve can trim the prompt-cache backing at startup (seen once
   in four runs, 829 MiB instead of 1 GiB, with no speed change).
-- Not yet run here: resident `IQ1_M`, `gufo bench` and `gufo prompt`,
+- Resident `IQ1_M` with the drafter and vision leaves under 1 GiB of GPU heap, so
+  the same reserve leaves no room for prompt-cache checkpoints. A conversation that
+  continues on its session still reuses it (24K-token history: next turn starts in
+  0.2 s), but repeats, edits and branches of earlier prompts prefill again; use a
+  streamed build when you need those.
+- Not yet run here: `gufo bench` and `gufo prompt`,
   `--exact-prefill`, the functional suites other than `reasoning-budget`, and the
   quality checks.
 
