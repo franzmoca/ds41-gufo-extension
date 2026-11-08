@@ -203,15 +203,20 @@ expert cache, balanced order, average of two runs, November 7, 2026:
 | Decode, code (tok/s) | 28.5 | 28.7 |
 | Decode, long document (tok/s) | 27.3 | 26.9 |
 
-With the `MXFP8` Engram, on upstream `main`:
+With the `MXFP8` Engram, on upstream `main` (decode averages four runs per build,
+November 7-8, 2026; prefill is one run):
 
 | Greedy | This extension | Fork |
 | --- | ---: | ---: |
 | Prefill, 3.5K tokens (tok/s) | 589 | 586 |
 | Prefill, 24K tokens (tok/s) | 1,050 | 1,022 |
-| Decode, chat (tok/s) | 17.7 | 17.8 |
-| Decode, code (tok/s) | 25.9 | 26.0 |
-| Decode, long document (tok/s) | 24.9 | 25.4 |
+| Decode, chat (tok/s) | 17.8 | 17.9 |
+| Decode, code (tok/s) | 26.1 | 26.1 |
+| Decode, long document (tok/s) | 25.2 | 25.3 |
+
+Decode varies more between runs than between the two builds: DSpark learns its draft
+lengths from measured step times, and the expert cache size depends on the memory free
+at startup.
 
 Generated text matches the fork on these requests. A smoke run also covered tool
 calls, images, concurrent requests and prompt-cache reuse.
@@ -222,7 +227,8 @@ calls, images, concurrent requests and prompt-cache reuse.
 - Gufo's 4 GiB heap reserve can trim the prompt-cache backing at startup (seen once
   in four runs, 829 MiB instead of 1 GiB, with no speed change).
 - Not yet run here: resident `IQ1_M`, `gufo bench` and `gufo prompt`,
-  `--exact-prefill`, the functional suites and the quality checks.
+  `--exact-prefill`, the functional suites other than `reasoning-budget`, and the
+  quality checks.
 
 Source layout and origin are in [UPSTREAM.md](UPSTREAM.md).
 
