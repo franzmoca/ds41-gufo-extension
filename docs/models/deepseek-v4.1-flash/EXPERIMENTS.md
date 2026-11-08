@@ -136,6 +136,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E100](#e100--decode-prediction-every-layer-with-non-blocking-retire-rejected) | streaming | rejected | All-hit prepares retire prefetch jobs without waiting, plus every-layer decode prediction: read wait −1 ms/token but +60% SSD reads and a router pass per layer; decode unchanged, greedy code −3%. |
 | [E101](#e101--untraced-cost-of-a-dependent-decode-launch-measured) | decode pipeline | measured | Empty dependent launches added per layer: 1.2-1.9 µs each untraced; a step's ~986 launches cost 2-3.4%, one fusion ~0.1%. |
 | [E102](#e102--dspark-attention-one-block-per-head-retained) | DSpark/speculation | retained | Drafter pass bandwidth table; DSpark attention reads the shared keys once per head (162 → 41 µs isolated): sampled long +0.9% on identical drafts, greedy unchanged within noise, outputs identical. |
+| [E103](#e103--drafter-q4_k-projections-through-the-split-gemv-retained) | DSpark/speculation | retained | The drafter's multi-row Q4_K projections use the split GEMV (bit-exact): a stage's six projections at 6 rows ~514 → ~415 µs; sampled cycles −0.2 to −0.5%, identical outputs and drafts. |
 
 ## Milestones
 
@@ -3750,6 +3751,42 @@ spread (E99). Sampled long keeps identical text and drafts: 100.5 → 99.7 ms
 per cycle, +0.9%. Sampled chat and code take another random path with the
 new rounding (chat drafts 461 → 455; the code reply diverges after its
 first paragraph), so they are not matched; chat is +1.4%.
+
+## E103 — drafter Q4_K projections through the split GEMV (retained)
+
+E102's table left the drafter's six Q4_K projections per stage at 113-181
+GB/s. At several rows the lane-layout GEMV re-reads each block's
+activations in every wave; the split kernel, which takes Q5_K, Q6_K and
+Q8_0 rows from 2-4 tokens (scalar activation loads, bit-identical sums),
+now also takes Q4_K from 2 rows. `tools/bench/ds41_dense_gemv_types.hip`
+gained the drafter shapes (`… 50 12`); DRAM-cold, 6 rows, at the slices
+the drafter picks, µs, every result bit-exact against single-row launches:
+
+| Projection | m × k | Lane layout | Split |
+| --- | --- | ---: | ---: |
+| `q_a` | 1280 × 5120 | 30.1 | 24.6 |
+| `kv` | 512 × 5120 | 14.2 | 13.2 |
+| `q_b` | 32768 × 1280 | 190.5 | 120.0 |
+| `output_a` | 8192 × 4096 | 119.0 | 100.4 |
+| `output_b` | 5120 × 8192 | 160.6 | 116.8 |
+| shared down | 5120 × 2304 | 53.4 | 40.2 |
+
+Streamed `UD-IQ2_XXS` as in E102, base = E102, order base, new, new, base,
+ms per cycle (generated tokens minus accepted drafts):
+
+| Request | Base | New |
+| --- | --- | --- |
+| sampled chat | 87.78, 87.53 | 87.33, 87.15 |
+| sampled code | 51.28, 51.54 | 51.32, 51.27 |
+| sampled long | 99.92, 99.83 | 99.55, 99.43 |
+| greedy code | 92.73, 92.49 | 92.27, 91.99 |
+| greedy long | 96.24, 96.19 | 95.74, 96.41 |
+
+Outputs are identical in all runs and sampled drafts match, so the cycles
+compare directly: −0.5%, −0.2% and −0.4% sampled. Greedy chat follows the
+policy's spread (E99). The bench's best slices differ from the drafter's
+rule for `q_b` (2), the shared expert's gate (8) and down (8), ~12 µs per
+stage, below this A/B's resolution; not changed.
 
 ## Backlog measurements without an E-number
 

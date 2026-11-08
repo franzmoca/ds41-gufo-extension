@@ -15,6 +15,10 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 * **dspark:** the drafter's attention reads its keys once per head instead of
   once per head and row, 4× faster; drafting cycles take ~1% less time
   ([E102](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e102--dspark-attention-one-block-per-head-retained)).
+* **dspark:** the drafter's Q4_K projections over several rows use the split
+  GEMV, with identical results; drafting cycles take a further 0.2-0.5% less
+  time
+  ([E103](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e103--drafter-q4_k-projections-through-the-split-gemv-retained)).
 
 ## 0.1.0 (2026-11-08)
 

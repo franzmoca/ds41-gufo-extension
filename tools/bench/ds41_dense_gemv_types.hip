@@ -1,7 +1,9 @@
 /* DRAM-cold slice sweep of the V4.1 Flash dense decode GEMV
  * (ds41_v41_gemv) on the decode shapes for Q8_0 (8), Q6_K (14) and Q5_K
- * (13), the formats the streamed build mixes per layer, at 1-8 tokens (the
- * DSpark verification widths), over slices 1-8. Weights rotate through
+ * (13), the formats the streamed build mixes per layer, and on the DSpark
+ * drafter's Q4_K (12) shapes, at 1-8 tokens (the DSpark verification and
+ * drafting widths), over slices 1-8. Optional arguments: repetitions, then
+ * the types to run. Weights rotate through
  * copies larger than the caches so every launch reads DRAM; each
  * multi-token result is checked bit for bit against single-token launches
  * on the same weights, the contract the verification rows rely on. The
@@ -25,16 +27,18 @@ struct Shape {
   uint32_t m, k, rows_per_x;
 };
 
+int BlockBytes(int type) { return type == 8 ? 34 : type == 14 ? 210 : type == 12 ? 144 : 176; }
+
 std::vector<uint8_t> RandomWeights(int type, size_t blocks, std::mt19937& rng) {
-  const size_t bytes = blocks * (type == 8 ? 34 : type == 14 ? 210 : 176);
-  std::vector<uint8_t> data(bytes);
+  const size_t block = BlockBytes(type);
+  std::vector<uint8_t> data(blocks * block);
   for (auto& b : data) b = static_cast<uint8_t>(rng());
   for (size_t i = 0; i < blocks; ++i) {
     const uint16_t d = 0x1c00 | (rng() & 0x3ff);
-    std::memcpy(&data[i * (type == 8 ? 34 : type == 14 ? 210 : 176) + (type == 14 ? 208 : 0)], &d, 2);
-    if (type == 13) {
+    std::memcpy(&data[i * block + (type == 14 ? 208 : 0)], &d, 2);
+    if (type == 13 || type == 12) {
       const uint16_t dmin = 0x1800 | (rng() & 0x3ff);
-      std::memcpy(&data[i * 176 + 2], &dmin, 2);
+      std::memcpy(&data[i * block + 2], &dmin, 2);
     }
   }
   return data;
@@ -44,18 +48,26 @@ std::vector<uint8_t> RandomWeights(int type, size_t blocks, std::mt19937& rng) {
 
 int main(int argc, char** argv) {
   const int reps = argc > 1 ? std::atoi(argv[1]) : 50;
-  const Shape shapes[] = {
+  const std::vector<Shape> target = {
       {"wo_b", 5120, 8192, 5120},    {"wo_a", 8192, 4096, 1024}, {"q_b", 32768, 1280, 32768},
       {"sh_down", 5120, 2304, 5120}, {"wq_akv", 1792, 5120, 1792},
   };
+  const std::vector<Shape> drafter = {
+      {"q_a", 1280, 5120, 1280},     {"kv", 512, 5120, 512},      {"q_b", 32768, 1280, 32768},
+      {"o_a", 8192, 4096, 1024},     {"o_b", 5120, 8192, 5120},   {"sh_gate", 2304, 5120, 2304},
+      {"sh_down", 5120, 2304, 5120},
+  };
+  std::vector<int> types;
+  for (int i = 2; i < argc; ++i) types.push_back(std::atoi(argv[i]));
+  if (types.empty()) types = {8, 14, 13, 12};
   std::mt19937 rng(41);
   hipEvent_t a, b;
   (void)hipEventCreate(&a);
   (void)hipEventCreate(&b);
-  for (int type : {8, 14, 13}) {
-    const int block = type == 8 ? 34 : type == 14 ? 210 : 176;
+  for (int type : types) {
+    const int block = BlockBytes(type);
     const int values = type == 8 ? 32 : 256;
-    for (const Shape& s : shapes) {
+    for (const Shape& s : type == 12 ? drafter : target) {
       const size_t bytes = (size_t)s.m * s.k / values * block;
       const int copies = (int)std::max<size_t>(2, (768u << 20) / bytes);
       const auto host = RandomWeights(type, (size_t)s.m * s.k / values, rng);
