@@ -277,6 +277,7 @@ leaves about 2 GiB free.
 - [Validation](docs/VALIDATION.md): this extension's test results.
 - [Tools](tools/README.md): model-file tools, streaming simulators, references and
   kernel benchmarks.
+- [CHANGELOG.md](CHANGELOG.md): changes by version.
 - [UPSTREAM.md](UPSTREAM.md): source layout and origin.
 
 ## License
