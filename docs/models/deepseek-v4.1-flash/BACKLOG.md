@@ -129,7 +129,8 @@ policy is shared (`src/cache/retention.cpp`), so other models must hold.
 
 The gap is the device's dispatch latency between dependent launches; graph
 replay keeps it (E44), and traced gaps after long GEMVs overstate it by
-~4.5 µs (E60). [Traces](EXPERIMENTS.md#item-4-decode-launch-gaps-2026-10-29-2026-10-31).
+~4.5 µs (E60). Untraced, a dependent launch costs 1.2-1.9 µs (E101): all
+~986 launches of a step are 2-3.4% of it, one fusion ~0.1%. [Traces](EXPERIMENTS.md#item-4-decode-launch-gaps-2026-10-29-2026-10-31).
 Only fewer launches help:
 
 - fusions: q rope into `q_b` (needs an epilogue pairing rows 8 lanes

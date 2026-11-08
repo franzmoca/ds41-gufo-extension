@@ -134,6 +134,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E98](#e98--lora-adapters-retained) | features | retained | LoRA adapters (`--adapter`, `adapter.type = lora`) on `attn_output_b`, `ffn_down_shexp` and per-expert `ffn_down_exps`; bit-identical without one; L22 abliteration LoRA 3K KL 0.012, heretic 0.018. Decode −1.6% (heretic) to −3.2% (L22), prefill −1.3% to −2.9%. |
 | [E99](#e99--greedy-dspark-reset-the-policy-per-request-probes-set-the-saving-retained) | DSpark/speculation | retained | Greedy probes set `gain_ms` to their own saving and each request resets the policy: streamed chat +4-7%, code +2-7.5%, outputs identical; sampled unchanged. |
 | [E100](#e100--decode-prediction-every-layer-with-non-blocking-retire-rejected) | streaming | rejected | All-hit prepares retire prefetch jobs without waiting, plus every-layer decode prediction: read wait −1 ms/token but +60% SSD reads and a router pass per layer; decode unchanged, greedy code −3%. |
+| [E101](#e101--untraced-cost-of-a-dependent-decode-launch-measured) | decode pipeline | measured | Empty dependent launches added per layer: 1.2-1.9 µs each untraced; a step's ~986 launches cost 2-3.4%, one fusion ~0.1%. |
 
 ## Milestones
 
@@ -3675,6 +3676,30 @@ per token but pays a router pass per layer (30 µs in `prefetch_sim`, not
 timed here) and 60% more SSD traffic beside the demand reads; decode does
 not gain, and greedy code loses 3%. A alone changes neither waits nor reads; its greedy chat figure
 is within the policy's run-to-run spread (E99). Reverted.
+
+## E101 — untraced cost of a dependent decode launch (measured)
+
+BACKLOG item 4 asks for the launch gaps' untraced share before any fusion.
+`DS41_PROBE_LAUNCHES=k` added k empty kernels (1 × 64 threads) per layer on
+the legacy stream ahead of each decode or verification layer
+([noop-launches.patch](artifacts/2026-11-08-launch-probe/noop-launches.patch)),
+and the DSpark trace gave each cycle kind's median time. Streamed
+`UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision, the chat/code/long greedy
+requests, order 0, 25, 50, 25, 0:
+
+| Extra launches per step | Plain step | 1-draft verify | 2-draft verify |
+| ---: | ---: | ---: | ---: |
+| 0 | 55.70, 56.50 ms | 70.10, 69.95 | 84.55, 85.05 |
+| 1,000 (k = 25) | 58.00, 59.55 | 72.30, 71.30 | 86.10, 85.85 |
+| 2,000 (k = 50) | 59.90 | 73.35 | 87.20 |
+
+From 0 to 2,000 launches a launch costs 1.9 µs in a plain step, 1.65 µs
+at one draft row and 1.2 µs at two. A step's ~986 launches therefore cost
+~1.2-1.9 ms of a 56-85 ms cycle, 2-3.4%: the bound for removing every
+launch. One launch fewer per layer saves ~0.05-0.08 ms per step
+(~0.1%), so single fusions are below the measurement floor, and a
+persistent per-layer kernel could gain at most ~3% before its own grid
+barriers.
 
 ## Backlog measurements without an E-number
 
