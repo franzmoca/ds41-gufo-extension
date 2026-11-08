@@ -43,7 +43,10 @@ struct Format<12> {  // Q4_K (DSpark drafter projections)
   static constexpr int kBlockBytes = 144;
   static constexpr int kTasks = 8;
   using Raw = RawQ45K;
+  using SplitRaw = Raw;
   static __device__ __forceinline__ Raw Load(const uint8_t* b, int t) { return LoadQ45K<false>(b, t); }
+  static __device__ __forceinline__ Raw LoadSplit(const uint8_t* b, int t) { return Load(b, t); }
+  static __device__ __forceinline__ void DecodeSplit(const Raw& r, int t, float (&w)[32]) { Decode(r, t, w); }
   static __device__ __forceinline__ void Decode(const Raw& r, int t, float (&w)[32]) { DecodeQ45K<false>(r, t, w); }
   static __device__ __forceinline__ void Decode(const uint8_t* b, int t, float (&w)[32]) { DecodeQ45K<false>(b, t, w); }
   static __device__ __forceinline__ float Dot(float acc, const float (&w)[32], int t, const float* x) {
@@ -386,11 +389,11 @@ void launch(const void* w, const void* w_up, float limit, const float* x, float*
   constexpr uint32_t kRows = (kWave / Format<kType>::kTasks) * (kWaves / S);
   const uint32_t blocks = (m + kRows - 1) / kRows;
   const auto* w2 = static_cast<const uint8_t*>(second.w);
-  if constexpr ((kType == 13 || kType == 8 || kType == 14) && kCols > 1) {
-    /* Plain Q5_K rows from 2 tokens, plain and paired Q6_K/Q8_0 rows from 4,
+  if constexpr ((kType == 13 || kType == 12 || kType == 8 || kType == 14) && kCols > 1) {
+    /* Plain Q5_K and Q4_K rows from 2 tokens, plain and paired Q6_K/Q8_0 rows from 4,
      * the fused SwiGLU from 6; below those the lane layout is as fast or
      * faster. */
-    const bool split = w_up ? kCols >= 6 : kCols >= (kType == 13 ? 2 : 4);
+    const bool split = w_up ? kCols >= 6 : kCols >= (kType == 13 || kType == 12 ? 2 : 4);
     if (split && second.m1 % kWave == 0 &&
         (rows_per_x == m || rows_per_x % kWave == 0) &&
         (uint64_t)m * S * kCols * (w_up ? 2 : 1) <= kSplitPartFloats) {
