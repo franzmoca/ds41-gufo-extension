@@ -3874,7 +3874,12 @@ session, fresh server per run; arms by a temporary environment switch in
 one build. A fixed-conversation replay settles E92's divergence: one Pi
 agent session (creation, bugfix, edit ×5 in one conversation, 15/15 tasks)
 recorded through a proxy, its 53 requests resent verbatim with seed 1234
-(1.6K → 12K context, 10.7K new prompt tokens, 5,504 generated). Outputs and
+(1.6K → 12K context, 10.7K new prompt tokens, 5,504 generated);
+`tools/ds41/agent_replay.py` records, replays and compares, and
+[artifacts/2026-11-09-agent-replay](artifacts/2026-11-09-agent-replay/)
+holds the session with the user name in paths and listings replaced; that
+changes a few prompt tokens and some replies (5,236 generated tokens on the
+E105 build, against 5,504 measured), so compare runs of the same file. Outputs and
 draft counts were identical in every run of every arm (tool-call ids
 aside).
 
