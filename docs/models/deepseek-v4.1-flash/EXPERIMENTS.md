@@ -139,6 +139,8 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E103](#e103--drafter-q4_k-projections-through-the-split-gemv-retained) | DSpark/speculation | retained | The drafter's multi-row Q4_K projections use the split GEMV (bit-exact): a stage's six projections at 6 rows ~514 → ~415 µs; sampled cycles −0.2 to −0.5%, identical outputs and drafts. |
 | [E104](#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained) | streaming | retained | Prefetch stage 192 → 96 rows, truncated wide jobs keep the most-routed experts; with 16 cache transfer streams the expert cache gains 1.0-1.5 GiB: prefill −0.1 to −2.6% (12K reuse −5.8% incl. one slow base run), greedy code −2.3% per cycle, outputs unchanged. 48 rows slowed a 3.5K prompt after a chat by 5-9%. |
 | [E105](#e105--eviction-by-frequency-class-retained) | expert cache | retained | ClassLRU-style eviction (llama.cpp #31233): use counts decaying over 2,048 tokens, victim max age / 2^class, seeded experts at half weight. Fixed-conversation agent replay −0.9% total, −6% reads; code prompt after a chat −10%; cold 2K/15K prompts +1-2%; outputs unchanged. |
+| [E106](#e106--lora-up-terms-in-the-hc-expand-retained) | features | retained | Decode-sized batches add the LoRA up terms inside the hc expand that reads the sublayer output (one launch fewer per matrix, bit-identical): L22 LoRA AR decode −0.4% in every arm, identical replies; heretic within noise. |
+| [E107](#e107--mxfp8-engram-cost-and-host-dequantization-retained) | streaming/reads | retained | MXFP8 rows dequantize with one power of two per block instead of `ldexpf` per value (bit-identical, 9× faster per row). Reads and per-step cost match IQ4_NL (profiled); the served DSpark gap (4-12%) is the drafts on different text, not the table. Prefill IQ4_NL ~1% faster, unbalanced. |
 
 ## Milestones
 
@@ -3943,6 +3945,106 @@ use: −0.9% total and −6% reads on the replayed session, −10% on a code
 prompt after a chat answer, at +1-2% on a cold first prompt.
 `ds41.expert_store` checks that an expert routed in eight batches outlasts
 one routed once, more recently (it fails under plain LRU).
+
+## E106 — LoRA up terms in the hc expand (retained)
+
+E98 left each LoRA matrix two dependent launches per step (down, then up
+into the sublayer output), 240 per token for the L22 LoRA. Decode-sized
+batches (the per-row block path, no direction adapter) now launch only the
+down; the up term `scale B t` is added inside the expand that already reads
+the output: `hc_expand` for `attn_output_b`, `hc_expand_sum` for
+`ffn_down_shexp` and then `ffn_down_exps`, in that order. The terms keep
+lora_up's sum (one shared `lora_up_add`), so the expanded rows are bit
+for bit those of the separate launches; `ds41.steer` checks this at 1, 3
+and 8 rows for one and two terms, ranks 1-16, dropped slots and rank-0
+terms. Batched prefill keeps the separate up launch. The L22 LoRA takes 120
+launches per token instead of 240; heretic 38 instead of 76.
+
+`deepseek41flash_steer_test --bench`, one token: attention site (down, up,
+expand) 9.01 → 7.13 µs, FFN site (two downs, two ups, expand sum) 14.69 →
+10.82 µs; about 0.23 ms per token over 40 layers.
+
+Served, streamed `UD-IQ2_XXS`, `MXFP8` Engram, vision, one session, fresh
+server per run, base `a05160d` against this build (`nix build`, same
+`flake.lock`); chat, code and long-document requests of 512 greedy tokens.
+Replies are identical in every arm. Totals of the three requests:
+
+| Adapter, mode | Base | New |
+| --- | ---: | ---: |
+| L22 LoRA, AR (ABBA) | 90.34 / 90.31 s | 89.95 / 89.96 s |
+| L22 LoRA, DSpark (ABBA) | 68.04 / 67.01 s | 66.84 / 66.59 s |
+| heretic LoRA, DSpark (one pair) | 63.18 s | 63.10 s |
+
+AR: −0.4% (0.24 ms/token), in line with the microbenchmark. DSpark draft
+counts differ between runs of the same binary (the policy probes time), so
+those totals are inconclusive; heretic's one launch per layer is within
+noise. Most of E98's −3.2% remains in the down launches; the shared
+expert's down already runs in the streamed decode gap while the host reads
+the routes. Run summaries:
+[artifacts/2026-11-09-lora-expand-mxfp8](artifacts/2026-11-09-lora-expand-mxfp8/runs.json).
+
+## E107 — MXFP8 Engram cost and host dequantization (retained)
+
+BACKLOG item 14 asked for the speed comparison of the MXFP8 Engram table
+(264-byte rows, 203 GB) against IQ4_NL (144-byte rows, 110 GB). Earlier
+served runs (2026-11-07, streamed `UD-IQ2_XXS`, DSpark, greedy, one IQ4_NL
+run) put MXFP8 decode 8-12% behind IQ4_NL.
+
+**Profile.** One profiled server per table and mode (rocprofv3, order AR
+MXFP8, AR IQ4_NL, DSpark IQ4_NL, DSpark MXFP8; chat, code and long-document
+replies of 512 tokens; `rowcost.py` and `budget.py` from
+[2026-11-02-decode](artifacts/2026-11-02-decode/)). Per decode step the
+Engram kernels take 1.12-1.25 ms with MXFP8 and 1.12-1.28 ms with IQ4_NL,
+and the GPU waits 0.00-0.10 against 0.03-0.12 ms for Engram rows. AR 1-row
+steps: 58.5 against 59.5 ms. DSpark cycles by verified rows, ms:
+
+| Rows | MXFP8 code | IQ4_NL code | MXFP8 long | IQ4_NL long |
+| ---: | ---: | ---: | ---: | ---: |
+| 3 | 146 × 94.6 | 81 × 98.0 | 150 × 99.0 | 106 × 97.9 |
+| 5 | 19 × 134.8 | 33 × 132.8 | 11 × 139.3 | 28 × 131.7 |
+| 6 | 12 × 148.5 | 14 × 153.8 | 17 × 151.3 | 18 × 145.4 |
+
+A cycle of a given size costs the same with either table; the totals differ
+by the cycles DSpark runs on the text each table produces. Chat accepted 68
+of 150 drafts with MXFP8 against 121 of 207 and ran 1-row cycles 365 times
+against 251 (30.82 against 30.42 s). Code and the long document accepted as
+many drafts (314 against 305, 313 against 329), but the policy settled on
+3-row cycles with MXFP8 where IQ4_NL ran more 5-row ones: 189 against 161
+cycles, 19.82 against 18.48 s, and 194 against 179, 20.81 against 19.62 s.
+Over the three replies MXFP8 decoded 4% slower in this run. That the policy
+stays at 3 rows when longer drafts would be accepted is a DSpark policy
+question, not an Engram one. Breakdowns:
+[engram-profile.txt](artifacts/2026-11-09-lora-expand-mxfp8/engram-profile.txt).
+
+**Reads.** `engram_read`'s pattern outside the server (random rows over the
+whole table, 4 rows per thread, uncached, 300 calls per point, two
+repetitions): 48 rows (a decode token) 391-419 µs IQ4_NL, 389-398 µs MXFP8;
+384 rows (an 8-row verification) 1,256 µs against 1,265-1,286 µs. Each row
+is one random NVMe read either way; the row count, not its size, sets the
+cost.
+
+**Dequantization.** `dequant_row` called `ldexpf` for every MXFP8 value:
+710-890 ns per row against 77 ns for IQ4_NL. An E4M3 value has at most four
+significant bits, so its product with the block's power of two is exact in
+double and one rounding to float gives `ldexpf`'s result: 80 ns per row, and
+bit-identical for all 256 exponent bytes × 256 codes. That is 1-2% of a
+read call, and up to ~85 ms of reader-thread CPU per 2K prefill batch.
+
+**Served prefill** (2K, 15K, 20K and 24K prompts, then a 12K one sharing
+half of the 24K one; ms, base / new, ABBA):
+
+| Prompt | MXFP8 base | MXFP8 new | IQ4_NL new |
+| --- | ---: | ---: | ---: |
+| 2,287 | 2,709 / 2,702 | 2,738 / 2,716 | 2,702 / 2,661 |
+| 14,144 | 14,505 / 14,107 | 14,177 / 14,225 | 13,951 / 14,105 |
+| 19,916 | 18,400 / 18,354 | 18,486 / 18,398 | 18,269 / 18,213 |
+| 23,943 | 22,105 / 21,601 | 21,694 / 21,683 | 21,588 / 21,415 |
+
+The dequantization change is within noise in prefill (the reads overlap
+earlier layers since E85). IQ4_NL ran ~1% faster, but its two runs came last
+and in a row, so that difference is unbalanced and inconclusive. Item 14 is
+closed: MXFP8 costs no measurable read or step time; its served speed with
+DSpark follows the drafts on the text it produces.
 
 ## Backlog measurements without an E-number
 

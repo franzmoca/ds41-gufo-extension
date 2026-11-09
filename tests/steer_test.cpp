@@ -5,7 +5,8 @@
 // sum, in project and add modes. Project vectors are not orthogonal, so the
 // order of the per-vector edits is checked too. LoRA low-rank terms are
 // checked the same way: dense and per-expert halves, FP16 and FP32 inputs,
-// routed slot groups and dropped slots.
+// routed slot groups and dropped slots. The expands that take the LoRA up
+// terms must equal lora_up followed by the plain expand bit for bit.
 #include <hip/hip_fp16.h>
 #include <hip/hip_runtime.h>
 
@@ -13,6 +14,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
 #include <random>
 #include <string_view>
 #include <vector>
@@ -294,6 +296,71 @@ bool LoraCase(uint32_t n, uint32_t group, uint32_t experts, uint32_t rank,
   return ok;
 }
 
+// The expand with deferred up terms against ds41_v41_lora_up into y and
+// then the plain expand: the attention form (one dense term, no rows) and
+// the FFN form (shared term, then routed term over six slots with dropped
+// ones; rank 0 skips a term). Bitwise equal.
+bool LoraExpandCase(uint32_t n, uint32_t rank_s, uint32_t rank_e, bool ffn,
+                    std::mt19937& rng) {
+  constexpr uint32_t kGroup = 6, kExperts = 9;
+  const uint32_t rows = ffn ? kGroup : 0;
+  auto* res = Device(Random((std::size_t)n * kHc * kDim, -2.0f, 2.0f, rng));
+  const auto y0 = Random((std::size_t)n * kDim, -2.0f, 2.0f, rng);
+  auto* y = Device(y0);
+  auto* x = Device(Random((std::size_t)n * kGroup * kDim, -2.0f, 2.0f, rng));
+  auto* post = Device(Random((std::size_t)n * kHc, 0.0f, 2.0f, rng));
+  auto* comb = Device(Random((std::size_t)n * kHc * kHc, 0.0f, 1.0f, rng));
+  const uint32_t rs = std::max(rank_s, 1u), re = std::max(rank_e, 1u);
+  auto* ts = Device(Random((std::size_t)n * rs, -1.0f, 1.0f, rng));
+  auto* bs = Device(Random((std::size_t)kDim * rs, -0.05f, 0.05f, rng));
+  auto* te = Device(Random((std::size_t)n * kGroup * re, -1.0f, 1.0f, rng));
+  auto* be =
+      Device(Random((std::size_t)kExperts * kDim * re, -0.05f, 0.05f, rng));
+  std::vector<int32_t> ids((std::size_t)n * kGroup);
+  for (std::size_t c = 0; c < ids.size(); ++c)
+    ids[c] = c % 5 == 3 ? -1 : (int32_t)(rng() % kExperts);
+  int32_t* dids = nullptr;
+  (void)hipMalloc(&dids, ids.size() * sizeof(int32_t));
+  (void)hipMemcpy(dids, ids.data(), ids.size() * sizeof(int32_t),
+                  hipMemcpyHostToDevice);
+  auto* got = Device(std::vector<float>((std::size_t)n * kHc * kDim));
+  auto* want = Device(std::vector<float>((std::size_t)n * kHc * kDim));
+  ds41_v41_lora_terms L{};
+  L.term[0] = {ts, nullptr, bs, 1, rank_s, 0.75f};
+  if (ffn)
+    L.term[1] = {te, dids, be, kGroup, rank_e, 1.25f};
+  bool ok = ffn ? ds41_v41_hc_expand_sum_lora(x, y, rows, res, post, comb, got,
+                                              kHc, kDim, n, &L) == 0
+                : ds41_v41_hc_expand_lora(y, res, post, comb, got, kHc, kDim, n,
+                                          &L) == 0;
+  // y unchanged by the fused form.
+  ok = ok && Host(y, y0.size()) == y0;
+  for (const auto& u : L.term)
+    if (u.rank)
+      ok = ok && ds41_v41_lora_up(u.t, u.ids, u.group, u.b, u.rank, kDim,
+                                  u.scale, n, y) == 0;
+  ok = ok &&
+       (ffn ? ds41_v41_hc_expand_sum(x, y, rows, res, post, comb, want, kHc,
+                                     kDim, n)
+            : ds41_v41_hc_expand(y, res, post, comb, want, kHc, kDim, n)) == 0;
+  std::size_t diff = 0;
+  if (ok) {
+    const auto g = Host(got, (std::size_t)n * kHc * kDim);
+    const auto w = Host(want, g.size());
+    for (std::size_t i = 0; i < g.size(); ++i)
+      diff += std::memcmp(&g[i], &w[i], sizeof(float)) != 0;
+  }
+  ok = ok && diff == 0;
+  std::printf("%s lora expand %s n=%u ranks %u+%u: %zu values differ\n",
+              ok ? "ok  " : "FAIL", ffn ? "ffn" : "attn", n, rank_s,
+              ffn ? rank_e : 0, diff);
+  for (void* p :
+       {(void*)res, (void*)y, (void*)x, (void*)post, (void*)comb, (void*)ts,
+        (void*)bs, (void*)te, (void*)be, (void*)dids, (void*)got, (void*)want})
+    (void)hipFree(p);
+  return ok;
+}
+
 void Bench(std::mt19937& rng) {
   const uint32_t n = 1, rows = 6;
   auto* res = Device(Random(kHc * kDim, -2.0f, 2.0f, rng));
@@ -346,8 +413,47 @@ void Bench(std::mt19937& rng) {
     ds41_v41_hc_expand_steer(x, y, rows, res, post, comb, out, kHc, kDim, n,
                              &whole);
   });
-  for (float* p : {res, y, x, post, comb, v, gram, out})
+  // L22-style rank-1 LoRA at the attention site (in 4096) and both FFN
+  // terms (in 2048): separate up launches against the deferred form.
+  auto* la = Device(Random(9 * 4096, -0.05f, 0.05f, rng));
+  auto* lb = Device(Random(9 * kDim, -0.05f, 0.05f, rng));
+  auto* lt = Device(std::vector<float>(1 + 1 + rows));
+  auto* xa = Device(Random(4096, -1.0f, 1.0f, rng));
+  std::vector<int32_t> ids = {0, 3, 5, 1, 8, 2};
+  int32_t* dids = nullptr;
+  (void)hipMalloc(&dids, ids.size() * sizeof(int32_t));
+  (void)hipMemcpy(dids, ids.data(), ids.size() * sizeof(int32_t),
+                  hipMemcpyHostToDevice);
+  time("attn lora: down+up+expand", [&] {
+    ds41_v41_lora_down(xa, 0, nullptr, la, 1, 4096, 1, lt);
+    ds41_v41_lora_up(lt, nullptr, 1, lb, 1, kDim, 1.0f, 1, y);
+    ds41_v41_hc_expand(y, res, post, comb, out, kHc, kDim, n);
+  });
+  ds41_v41_lora_terms La{};
+  La.term[0] = {lt, nullptr, lb, 1, 1, 1.0f};
+  time("attn lora: down+expand", [&] {
+    ds41_v41_lora_down(xa, 0, nullptr, la, 1, 4096, 1, lt);
+    ds41_v41_hc_expand_lora(y, res, post, comb, out, kHc, kDim, n, &La);
+  });
+  time("ffn lora: 2x(down+up)+sum", [&] {
+    ds41_v41_lora_down(x, 0, nullptr, la, 1, 2048, 1, lt);
+    ds41_v41_lora_up(lt, nullptr, 1, lb, 1, kDim, 1.0f, 1, y);
+    ds41_v41_lora_down(x, 0, dids, la, 1, 2048, rows, lt + 1);
+    ds41_v41_lora_up(lt + 1, dids, rows, lb, 1, kDim, 1.0f, 1, y);
+    ds41_v41_hc_expand_sum(x, y, rows, res, post, comb, out, kHc, kDim, n);
+  });
+  ds41_v41_lora_terms Lf{};
+  Lf.term[0] = {lt, nullptr, lb, 1, 1, 1.0f};
+  Lf.term[1] = {lt + 1, dids, lb, rows, 1, 1.0f};
+  time("ffn lora: 2x down+sum", [&] {
+    ds41_v41_lora_down(x, 0, nullptr, la, 1, 2048, 1, lt);
+    ds41_v41_lora_down(x, 0, dids, la, 1, 2048, rows, lt + 1);
+    ds41_v41_hc_expand_sum_lora(x, y, rows, res, post, comb, out, kHc, kDim, n,
+                                &Lf);
+  });
+  for (float* p : {res, y, x, post, comb, v, gram, out, la, lb, lt, xa})
     (void)hipFree(p);
+  (void)hipFree(dids);
 }
 
 }  // namespace
@@ -386,5 +492,13 @@ int main(int argc, char** argv) {
       ok = LoraCase(n, 1, 0, 16, 2048, kDim, half, rng) && ok;  // shared down
       ok = LoraCase(n, 6, 9, 4, 2048, kDim, half, rng) && ok;   // routed down
     }
+  for (uint32_t n : {1u, 3u, 8u}) {
+    ok = LoraExpandCase(n, 1, 0, false, rng) && ok;
+    ok = LoraExpandCase(n, 2, 0, false, rng) && ok;
+    ok = LoraExpandCase(n, 1, 1, true, rng) && ok;
+    ok = LoraExpandCase(n, 16, 4, true, rng) && ok;
+    ok = LoraExpandCase(n, 0, 4, true, rng) && ok;
+    ok = LoraExpandCase(n, 2, 0, true, rng) && ok;
+  }
   return ok ? 0 : 1;
 }

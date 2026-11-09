@@ -34,6 +34,15 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   ~0.9 GiB more to the expert cache, with identical outputs
   ([E104](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained)).
 
+* **adapters:** LoRA decode adds each matrix's low-rank term inside the
+  residual update instead of a launch of its own; with the 120-matrix L22
+  abliteration LoRA, decode is 0.4% faster with identical outputs
+  ([E106](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e106--lora-up-terms-in-the-hc-expand-retained)).
+
+* **engram:** MXFP8 Engram rows decode about 9× faster on the host, with
+  identical values; MXFP8 reads cost the same as IQ4_NL
+  ([E107](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e107--mxfp8-engram-cost-and-host-dequantization-retained)).
+
 * **streaming:** the expert cache evicts by frequency class: an expert used
   twice as often may stay unused twice as long. A replayed agent session
   reads 6% less and runs ~1% faster, and a code prompt after a chat answer

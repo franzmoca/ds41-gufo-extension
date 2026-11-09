@@ -151,7 +151,12 @@ rows it needs from the SSD, so it takes no model memory.
 | --- | ---: | --- | --- |
 | `IQ4_NL` | 103 GiB | ISTA's builds; Unsloth's `UD-IQ1_M` and `UD-IQ1_S` | Baseline |
 | `Q5_K` | 126 GiB | Unsloth's `UD-IQ2_XXS` | Not measured |
-| `MXFP8` | 189 GiB | Unsloth's `engram/` folder, the checkpoint's own format | 8-10% slower |
+| `MXFP8` | 189 GiB | Unsloth's `engram/` folder, the checkpoint's own format | Same per step; 4-12% slower with DSpark |
+
+Both tables cost about 1.2 ms of a ~60 ms decode step, and reading either takes
+the same time. With DSpark, `MXFP8` decoded 4-12% slower in our runs because its
+replies differ, and on them the drafter was accepted less often or ran shorter
+drafts ([E107](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e107--mxfp8-engram-cost-and-host-dequantization-retained)).
 
 `MXFP8` is lossless. In the measurements it moves no task score and lowers
 perplexity slightly only on text the model has likely memorised

@@ -1,0 +1,294 @@
+# Profiled served decode, streamed UD-IQ2_XXS, greedy, 512 tokens per prompt, one fresh server per run
+# order: ar-mx, ar-iq4, ds-iq4, ds-mx; mx = MXFP8 Engram, iq4 = IQ4_NL Engram; rowcost.py and budget.py from artifacts/2026-11-02-decode
+ar-mx
+  rows  1 n=1499 cycle   58.5 ms = pre-verify   0.0 + verify   58.5 (busy  49.6, experts  11.7)
+  rows 16 n=  11 cycle  286.7 ms = pre-verify   0.0 + verify  286.7 (busy 227.5, experts 130.3)
+ar-iq4
+  rows  1 n=1463 cycle   59.5 ms = pre-verify   0.0 + verify   59.5 (busy  50.0, experts  11.9)
+  rows 16 n=   7 cycle  273.2 ms = pre-verify   0.0 + verify  273.2 (busy 225.5, experts 130.3)
+ds-mx
+  rows  1 n= 382 cycle   61.5 ms = pre-verify   1.0 + verify   60.5 (busy  50.1, experts  11.8)
+  rows  2 n=   7 cycle  145.2 ms = pre-verify   8.4 + verify  136.9 (busy  63.3, experts  21.7)
+  rows  3 n= 366 cycle   98.3 ms = pre-verify   8.5 + verify   89.8 (busy  74.0, experts  29.3)
+  rows  4 n=   7 cycle  129.0 ms = pre-verify   8.4 + verify  120.7 (busy  85.9, experts  37.8)
+  rows  5 n=  30 cycle  136.5 ms = pre-verify   8.3 + verify  128.2 (busy 100.4, experts  48.7)
+  rows  6 n=  29 cycle  150.2 ms = pre-verify   8.6 + verify  141.6 (busy 111.6, experts  56.3)
+  rows 16 n=   5 cycle  317.6 ms = pre-verify   0.0 + verify  317.6 (busy 227.6, experts 130.9)
+ds-iq4
+  rows  1 n= 255 cycle   69.8 ms = pre-verify   0.6 + verify   69.2 (busy  52.1, experts  12.6)
+  rows  2 n= 128 cycle   84.4 ms = pre-verify   8.5 + verify   75.9 (busy  62.4, experts  20.7)
+  rows  3 n= 225 cycle   98.8 ms = pre-verify   8.6 + verify   90.2 (busy  74.7, experts  29.3)
+  rows  4 n=  22 cycle  122.4 ms = pre-verify   8.2 + verify  114.3 (busy  86.3, experts  38.0)
+  rows  5 n=  62 cycle  132.1 ms = pre-verify   8.7 + verify  123.4 (busy 100.4, experts  48.3)
+  rows  6 n=  32 cycle  149.1 ms = pre-verify   8.8 + verify  140.3 (busy 112.8, experts  57.2)
+  rows 16 n=   7 cycle  290.0 ms = pre-verify   0.0 + verify  290.0 (busy 229.1, experts 133.1)
+
+## ar-mx chat: 512 steps, 512 rows, wall 30.73 s, 60.01 ms/step (median 58.20), busy 50.71 ms/step
+    29.422 ms  dense GEMV
+    11.803 ms  routed experts
+     3.695 ms  hyper-connections
+     2.765 ms  copy kernels
+     2.342 ms  output head
+     1.934 ms  memcpy: expert uploads
+     1.685 ms  router/BF16
+     1.401 ms  attention+misc
+     1.132 ms  engram
+     0.020 ms  memcpy: small
+     5.571 ms  idle: expert reads (upload next)
+     2.925 ms  idle: launch gaps <20us
+     0.363 ms  idle: step start (host)
+     0.191 ms  idle: expert reads
+     0.099 ms  idle: engram
+     0.062 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.046 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.036 ms  idle: before copy 517120B
+     0.004 ms  idle: other >20us (gemv_kernel<8, 8, false, 1>)
+     0.004 ms  idle: other >20us (__amd_rocclr_fillBufferUnAli)
+
+## ar-mx code: 496 steps, 548 rows, wall 29.34 s, 59.16 ms/step (median 56.09), busy 51.70 ms/step
+    29.397 ms  dense GEMV
+    12.532 ms  routed experts
+     3.735 ms  hyper-connections
+     2.728 ms  copy kernels
+     2.346 ms  output head
+     2.123 ms  attention+misc
+     1.682 ms  router/BF16
+     1.473 ms  memcpy: expert uploads
+     1.121 ms  engram
+     0.020 ms  memcpy: small
+     3.732 ms  idle: expert reads (upload next)
+     2.894 ms  idle: launch gaps <20us
+     0.348 ms  idle: step start (host)
+     0.179 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.111 ms  idle: expert reads
+     0.099 ms  idle: engram
+     0.045 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.037 ms  idle: before copy 517120B
+     0.002 ms  idle: other >20us (matmul_bf16_vec8_kernel)
+     0.002 ms  idle: before copy 20480B
+
+## ar-mx long: 503 steps, 623 rows, wall 30.88 s, 61.39 ms/step (median 56.66), busy 53.91 ms/step
+    29.517 ms  dense GEMV
+    13.558 ms  routed experts
+     3.802 ms  hyper-connections
+     3.029 ms  attention+misc
+     2.705 ms  copy kernels
+     2.352 ms  output head
+     1.734 ms  router/BF16
+     1.679 ms  memcpy: expert uploads
+     1.117 ms  engram
+     0.020 ms  memcpy: small
+     3.860 ms  idle: expert reads (upload next)
+     2.946 ms  idle: launch gaps <20us
+     0.356 ms  idle: step start (host)
+     0.093 ms  idle: engram
+     0.091 ms  idle: expert reads
+     0.044 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.043 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.036 ms  idle: before copy 517120B
+     0.004 ms  idle: other >20us (split_gemv_kernel<14, 8, fal)
+     0.004 ms  idle: before copy 20480B
+
+## ar-iq4 chat: 512 steps, 512 rows, wall 31.77 s, 62.05 ms/step (median 59.89), busy 52.00 ms/step
+    30.228 ms  dense GEMV
+    12.161 ms  routed experts
+     3.751 ms  hyper-connections
+     2.843 ms  copy kernels
+     2.409 ms  output head
+     1.930 ms  memcpy: expert uploads
+     1.727 ms  router/BF16
+     1.392 ms  attention+misc
+     1.174 ms  engram
+     0.019 ms  memcpy: small
+     6.196 ms  idle: expert reads (upload next)
+     2.904 ms  idle: launch gaps <20us
+     0.452 ms  idle: step start (host)
+     0.198 ms  idle: expert reads
+     0.106 ms  idle: engram
+     0.071 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.049 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.045 ms  idle: before copy 517120B
+     0.009 ms  idle: other >20us (hc_mix_small_kernel<4u>)
+     0.005 ms  idle: engram rows
+
+## ar-iq4 code: 461 steps, 536 rows, wall 27.89 s, 60.51 ms/step (median 56.89), busy 52.57 ms/step
+    29.467 ms  dense GEMV
+    13.049 ms  routed experts
+     3.780 ms  hyper-connections
+     2.715 ms  copy kernels
+     2.350 ms  output head
+     2.236 ms  attention+misc
+     1.717 ms  router/BF16
+     1.659 ms  memcpy: expert uploads
+     1.125 ms  engram
+     0.020 ms  memcpy: small
+     4.295 ms  idle: expert reads (upload next)
+     2.923 ms  idle: launch gaps <20us
+     0.349 ms  idle: step start (host)
+     0.118 ms  idle: expert reads
+     0.099 ms  idle: engram
+     0.051 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.044 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.036 ms  idle: before copy 517120B
+     0.007 ms  idle: engram rows
+     0.003 ms  idle: other >20us (copy_list_kernel)
+
+## ar-iq4 long: 504 steps, 549 rows, wall 29.88 s, 59.29 ms/step (median 57.19), busy 52.04 ms/step
+    29.374 ms  dense GEMV
+    12.400 ms  routed experts
+     3.738 ms  hyper-connections
+     2.719 ms  copy kernels
+     2.666 ms  attention+misc
+     2.348 ms  output head
+     1.673 ms  router/BF16
+     1.361 ms  memcpy: expert uploads
+     1.115 ms  engram
+     0.020 ms  memcpy: small
+     3.660 ms  idle: expert reads (upload next)
+     2.921 ms  idle: launch gaps <20us
+     0.352 ms  idle: step start (host)
+     0.094 ms  idle: expert reads
+     0.094 ms  idle: engram
+     0.045 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.036 ms  idle: before copy 517120B
+     0.036 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.003 ms  idle: before copy 61440B
+     0.002 ms  idle: before copy 20480B
+
+## ds-mx chat: 443 steps, 593 rows, wall 30.81 s, 69.55 ms/step (median 60.17), busy 58.87 ms/step
+    30.507 ms  dense GEMV
+    14.719 ms  routed experts
+     3.970 ms  hyper-connections
+     3.916 ms  memcpy: expert uploads
+     2.705 ms  copy kernels
+     2.374 ms  output head
+     2.063 ms  drafter (+inject)
+     1.817 ms  router/BF16
+     1.664 ms  attention+misc
+     1.158 ms  engram
+     0.019 ms  memcpy: small
+     6.652 ms  idle: expert reads (upload next)
+     3.051 ms  idle: launch gaps <20us
+     0.235 ms  idle: step start (host)
+     0.200 ms  idle: drafter gaps
+     0.194 ms  idle: expert reads
+     0.103 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.084 ms  idle: engram
+     0.067 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.048 ms  idle: before copy 517120B
+     0.034 ms  idle: other >20us (split_gemv_kernel<14, 8, fal)
+
+## ds-mx code: 189 steps, 662 rows, wall 19.82 s, 104.89 ms/step (median 94.45), busy 90.56 ms/step
+    33.702 ms  routed experts
+    32.837 ms  dense GEMV
+     7.427 ms  drafter (+inject)
+     5.763 ms  memcpy: expert uploads
+     5.417 ms  hyper-connections
+     5.271 ms  attention+misc
+     2.629 ms  copy kernels
+     2.566 ms  router/BF16
+     2.534 ms  output head
+     1.246 ms  engram
+     0.018 ms  memcpy: small
+     8.882 ms  idle: expert reads (upload next)
+     3.678 ms  idle: launch gaps <20us
+     0.724 ms  idle: drafter gaps
+     0.273 ms  idle: expert reads
+     0.256 ms  idle: other >20us (split_gemv_kernel<14, 8, fal)
+     0.245 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.153 ms  idle: step start (host)
+     0.103 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.004 ms  idle: other >20us (copy_list_kernel)
+     0.003 ms  idle: engram
+
+## ds-mx long: 194 steps, 671 rows, wall 20.81 s, 107.27 ms/step (median 97.75), busy 92.01 ms/step
+    33.496 ms  routed experts
+    32.776 ms  dense GEMV
+     7.410 ms  drafter (+inject)
+     6.764 ms  attention+misc
+     6.043 ms  memcpy: expert uploads
+     5.398 ms  hyper-connections
+     2.576 ms  copy kernels
+     2.560 ms  router/BF16
+     2.529 ms  output head
+     1.218 ms  engram
+     0.019 ms  memcpy: small
+     9.795 ms  idle: expert reads (upload next)
+     3.720 ms  idle: launch gaps <20us
+     0.721 ms  idle: drafter gaps
+     0.285 ms  idle: other >20us (split_gemv_kernel<14, 8, fal)
+     0.242 ms  idle: expert reads
+     0.224 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.148 ms  idle: step start (host)
+     0.112 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.005 ms  idle: engram
+     0.003 ms  idle: other >20us (copy_list_kernel)
+
+## ds-iq4 chat: 391 steps, 598 rows, wall 30.41 s, 77.77 ms/step (median 70.03), busy 62.82 ms/step
+    31.644 ms  dense GEMV
+    16.745 ms  routed experts
+     4.132 ms  hyper-connections
+     3.227 ms  memcpy: expert uploads
+     3.200 ms  drafter (+inject)
+     2.687 ms  copy kernels
+     2.508 ms  output head
+     1.928 ms  router/BF16
+     1.827 ms  attention+misc
+     1.227 ms  engram
+     0.021 ms  memcpy: small
+     9.265 ms  idle: expert reads (upload next)
+     3.104 ms  idle: launch gaps <20us
+     0.769 ms  idle: other >20us (hc_mix_small_kernel<4u>)
+     0.483 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.363 ms  idle: drafter gaps
+     0.336 ms  idle: expert reads
+     0.260 ms  idle: step start (host)
+     0.121 ms  idle: engram
+     0.104 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.062 ms  idle: other >20us (mul_mat_vec_q<(ggml_type)12,)
+
+## ds-iq4 code: 161 steps, 630 rows, wall 18.48 s, 114.81 ms/step (median 103.75), busy 98.19 ms/step
+    38.370 ms  routed experts
+    34.141 ms  dense GEMV
+     7.418 ms  drafter (+inject)
+     7.243 ms  memcpy: expert uploads
+     5.966 ms  attention+misc
+     5.625 ms  hyper-connections
+     2.816 ms  copy kernels
+     2.777 ms  router/BF16
+     2.611 ms  output head
+     1.283 ms  engram
+     0.020 ms  memcpy: small
+    10.769 ms  idle: expert reads (upload next)
+     3.785 ms  idle: launch gaps <20us
+     0.811 ms  idle: drafter gaps
+     0.383 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.321 ms  idle: expert reads
+     0.206 ms  idle: other >20us (split_gemv_kernel<14, 8, fal)
+     0.155 ms  idle: step start (host)
+     0.114 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.032 ms  idle: engram
+     0.020 ms  idle: other >20us (split_gemv_kernel<8, 4, fals)
+
+## ds-iq4 long: 179 steps, 660 rows, wall 19.62 s, 109.59 ms/step (median 100.04), busy 94.60 ms/step
+    35.285 ms  routed experts
+    32.960 ms  dense GEMV
+     7.624 ms  drafter (+inject)
+     7.156 ms  attention+misc
+     6.029 ms  memcpy: expert uploads
+     5.444 ms  hyper-connections
+     2.683 ms  copy kernels
+     2.641 ms  router/BF16
+     2.539 ms  output head
+     1.215 ms  engram
+     0.021 ms  memcpy: small
+     9.433 ms  idle: expert reads (upload next)
+     3.771 ms  idle: launch gaps <20us
+     0.760 ms  idle: drafter gaps
+     0.256 ms  idle: expert reads
+     0.253 ms  idle: other >20us (split_gemv_kernel<14, 8, fal)
+     0.215 ms  idle: other >20us (__amd_rocclr_copyBuffer)
+     0.141 ms  idle: step start (host)
+     0.119 ms  idle: other >20us (__amd_rocclr_copyBufferRectA)
+     0.032 ms  idle: engram
+     0.003 ms  idle: before copy 1034240B

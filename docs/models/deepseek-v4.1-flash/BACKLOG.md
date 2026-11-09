@@ -325,7 +325,6 @@ against the oracle plus perplexity at 3K and 18.5K
 | 24 | Selection-only miss penalty | Up to the ~5 ms/token of miss-read idle warm; more cold, after long prompts and in verification (mako) | Residency bitmap in the router top-k |
 | 13 | Route bias toward cached experts | Xolotl: 13.7 → 30.3 tok/s on a 4090 at ~1 point of top-1; scales logits, so it changes mixing weights too | Same gates and runs as item 24 |
 | 23 | Streamed `IQ2_XS` with cache-aware routing | Lower KL than `IQ2_XXS`; slower at ~3/4 of experts cached | Item 27 first |
-| 14 | Higher-precision Engram tables | MXFP8: no measurable quality gain ([EVAL.md](EVAL.md)) | Speed comparison, then close |
 
 ### 24. Selection-only miss penalty
 
@@ -344,13 +343,6 @@ ISTA's `IQ2_XS` is closer to the reference than `IQ2_XXS` in mako's
 measurements, but here the cache would hold about three quarters of its
 expert bytes on a slower SSD. Measure whether item 13 or 24 makes it a
 usable higher-quality streamed option once item 27 runs it.
-
-### 14. Higher-precision Engram tables
-
-MXFP8 matches IQ4_NL on 18.5K perplexity, MMLU-Pro, HumanEval+ and MBPP+
-on `IQ1_M` and `IQ2_XXS` ([EVAL.md](EVAL.md)); Q5_K/Q6_K are untested.
-Record the speed comparison (rows grow up to 3.6×; E28 put today's reads
-under 1% of warm streamed prefill) and close.
 
 ## Features, model support and multi-user serving
 
@@ -391,9 +383,11 @@ Check each against the resident MMQ/MMVQ outputs (`ds41.mmq_typed`,
 ### Adapter follow-ups
 
 Per-request adapter scale (the prompt cache would key on it). LoRA decode
-launches: each matrix adds a down and an up launch (240 per token for the
-L22 LoRA, −3.2% decode, E98); one-launch kernels lost, so the remaining
-option is the A dot and B term as epilogues of the producing GEMVs.
+launches: the up terms join the hc expand since E106 (L22 LoRA 240 → 120
+launches per token, AR −0.4%); each matrix still adds its down launch.
+One-launch kernels lost (E98), so the remaining option is the A dot as an
+epilogue of the GEMV producing its input, or one launch for the shared and
+routed FFN downs (the shared one already overlaps the streamed host gap).
 
 ## Tried and closed
 
@@ -432,6 +426,7 @@ in EXPERIMENTS.md.
 | Item | Result | Ref |
 | --- | --- | --- |
 | Streamed expert-pruned builds (item 41) | Coder streams with the kept experts' ranking; scores byte-identical to resident; default cache at resident speed, 30 GiB cache tg128 14.5 → 21.8 tok/s as it warms | E96 |
+| Higher-precision Engram tables (item 14) | MXFP8 reads cost the same as IQ4_NL (one random read per row); host dequantization 9× faster, bit-identical; served gaps follow the text; Q5_K/Q6_K tables untested | E107 |
 | LoRA adapters (item 26): `--adapter` on `attn_output_b`, `ffn_down_shexp`, `ffn_down_exps` | Bit-identical without one; L22 LoRA 3K KL 0.012, heretic 0.018; decode −1.6 to −3.2% | E98 |
 | Direction adapters (item 25): `--adapter`, mako files and rank-1 LoRAs | Bit-identical without one; 3K perplexity ±0.002 nats, KL 0.012-0.015; decode −0.5 to −0.9% | E97 |
 | Greedy DSpark width policy (DECODE.md lever 1) | Chat 16.5-16.9 → 17.6-18.9, code 26.6-27.4 → 28.3-28.7, long 24.7-26.2 → 26.4-26.7 tok/s | E87 |
