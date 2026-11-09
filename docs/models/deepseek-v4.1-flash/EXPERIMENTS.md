@@ -3587,6 +3587,16 @@ resident one (tg64 hashes, also without an adapter); streamed pp2048/tg64
 
 Refusal rates were not measured here.
 
+Ported to the extension on 2026-11-09: the loaders are `direction_adapter.cpp` and
+`lora_adapter.cpp`, the converter is `tools/ds41/direction_adapter.py`, and
+`--adapter`/`--adapter-scale` are provider options. The converter reproduces E97's
+three converted files byte for byte. Streamed `UD-IQ2_XXS`, `MXFP8` Engram,
+DSpark, vision, greedy chat, code and long-document requests of 512 tokens:
+without an adapter the text equals the build before; mako, the L22 LoRA and
+heretic load (62 sets; 120 matrices, 438 MiB; 38 matrices, 3.9 MiB) and change
+the text; greedy DSpark equals AR with mako and with the L22 LoRA. Speed was not
+measured again.
+
 ## E99 — greedy DSpark: reset the policy per request, probes set the saving (retained)
 
 Streamed `IQ1_M` decoded chat about 11% slower than resident (26.0-26.4

@@ -1,11 +1,14 @@
 # DeepSeek V4.1 Flash external model extension.
 
-# Host side: artifact probe, chat template, tool syntax and registration.
+# Host side: artifact probe, chat template, tool syntax, adapter files and
+# registration.
 gufo_extension_target(
   NAME gufo_deepseek41flash
   SOURCES
     chat_template.cpp
+    direction_adapter.cpp
     extension.cpp
+    lora_adapter.cpp
     probe.cpp
     text_contract.cpp
     tool_calls.cpp
@@ -74,6 +77,7 @@ endif()
 gufo_extension_target(
   NAME gufo_deepseek41flash_hip
   SOURCES
+    adapter.cpp
     continuation_adapter.cpp
     engine.cpp
     runtime/expert_store.cpp
@@ -180,12 +184,16 @@ _deepseek41flash_test(chat_template "cpu;tokenization"
   LINK_LIBRARIES gufo_deepseek41flash)
 _deepseek41flash_test(text_contract "cpu;tools"
   LINK_LIBRARIES gufo_deepseek41flash)
+_deepseek41flash_test(direction_adapter "cpu;gguf"
+  LINK_LIBRARIES gufo_deepseek41flash)
+_deepseek41flash_test(lora_adapter "cpu;gguf"
+  LINK_LIBRARIES gufo_deepseek41flash)
 
 if(ENGINE_ENABLE_HIP)
   _deepseek41flash_test(vision_prompt "cpu;vision"
     LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash)
   foreach(name IN ITEMS attention candidate_mask draft_sampling expert_store
-                        hc_state_pass mmq_typed)
+                        hc_state_pass mmq_typed steer)
     _deepseek41flash_test(${name} "hip;gpu;gfx1151;quality"
       LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash gufo_ext_hip)
   endforeach()

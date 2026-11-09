@@ -1842,6 +1842,147 @@ static void seed_experts(ds41_engine* e) {
   }
 }
 
+/* Copies the direction adapter sets to the device and fills e->steer: each
+ * layer's vectors, then for project mode the Gram terms of each edit. */
+static bool upload_directions(ds41_engine* e, const ds41_engine_options* opt) {
+  if (!opt->n_directions)
+    return true;
+  if (!opt->directions || !std::isfinite(opt->direction_scale))
+    return false;
+  const ds41_direction_set* at[DS41_N_LAYER][DS41_N_DIRECTION_SITES] = {};
+  uint64_t floats = 0;
+  for (uint32_t i = 0; i < opt->n_directions; i++) {
+    const ds41_direction_set& set = opt->directions[i];
+    if (set.layer >= DS41_N_LAYER || set.site >= DS41_N_DIRECTION_SITES || !set.count ||
+        set.count > DS41_V41_STEER_MAX_K || !set.vectors || at[set.layer][set.site]) {
+      fprintf(stderr, "ds41: direction set %u is invalid (at most %u vectors per site and layer)\n", i,
+              DS41_V41_STEER_MAX_K);
+      return false;
+    }
+    at[set.layer][set.site] = &set;
+    floats += (uint64_t)set.count * DS41_N_EMBD;
+  }
+  floats += (uint64_t)DS41_N_LAYER * 2 * DS41_V41_STEER_GRAM;
+  std::vector<float> host;
+  host.reserve(floats);
+  /* Offsets into host, resolved to device pointers after the copy. */
+  struct Slot {
+    int64_t extra = -1, total = -1, gram = -1;
+  } slots[DS41_N_LAYER][2];
+  for (uint32_t il = 0; il < DS41_N_LAYER; il++) {
+    const ds41_direction_set* sites[2][2] = {{nullptr, at[il][DS41_SITE_ATTN_OUT]},
+                                             {at[il][DS41_SITE_SHEXP_OUT], at[il][DS41_SITE_FFN_OUT]}};
+    for (int k = 0; k < 2; k++) {
+      const ds41_direction_set* extra = sites[k][0];
+      const ds41_direction_set* total = sites[k][1];
+      if (!extra && !total)
+        continue;
+      Slot& slot = slots[il][k];
+      ds41_v41_steer& st = e->steer[il][k];
+      if (extra) {
+        slot.extra = (int64_t)host.size();
+        host.insert(host.end(), extra->vectors, extra->vectors + (uint64_t)extra->count * DS41_N_EMBD);
+        st.extra_k = extra->count;
+      }
+      if (total) {
+        slot.total = (int64_t)host.size();
+        host.insert(host.end(), total->vectors, total->vectors + (uint64_t)total->count * DS41_N_EMBD);
+        st.total_k = total->count;
+      }
+      slot.gram = (int64_t)host.size();
+      host.resize(host.size() + DS41_V41_STEER_GRAM);
+      ds41_v41_steer_gram(extra ? extra->vectors : nullptr, st.extra_k, total ? total->vectors : nullptr, st.total_k,
+                          DS41_N_EMBD, host.data() + slot.gram);
+    }
+  }
+  void* p = nullptr;
+  if (hipMalloc(&p, host.size() * sizeof(float)) != hipSuccess ||
+      hipMemcpy(p, host.data(), host.size() * sizeof(float), hipMemcpyHostToDevice) != hipSuccess) {
+    if (p)
+      (void)hipFree(p);
+    return false;
+  }
+  e->steer_vectors = static_cast<float*>(p);
+  for (uint32_t il = 0; il < DS41_N_LAYER; il++)
+    for (int k = 0; k < 2; k++) {
+      ds41_v41_steer& st = e->steer[il][k];
+      const Slot& slot = slots[il][k];
+      st.extra_v = slot.extra >= 0 ? e->steer_vectors + slot.extra : nullptr;
+      st.total_v = slot.total >= 0 ? e->steer_vectors + slot.total : nullptr;
+      st.gram = slot.gram >= 0 ? e->steer_vectors + slot.gram : nullptr;
+      st.scale = opt->direction_scale;
+      st.add = opt->direction_add ? 1 : 0;
+    }
+  gufo::server::Logger::LogFormatted(
+      gufo::server::LogLevel::kInfo, "ds41", "direction adapter: %u sets (%s, scale %g), %.2f MiB",
+      opt->n_directions, opt->direction_add ? "add" : "project", (double)opt->direction_scale,
+      (double)host.size() * sizeof(float) / 1048576.0);
+  return true;
+}
+
+/* Copies the LoRA halves to the device after checking each against the
+ * model's own matrix, and sizes the scratch for the largest batch. */
+static bool upload_loras(ds41_engine* e, const ds41_engine_options* opt) {
+  if (!opt->n_loras)
+    return true;
+  if (!opt->loras)
+    return false;
+  uint64_t floats = 0;
+  bool seen[DS41_N_LAYER][DS41_N_LORA_TARGETS] = {};
+  for (uint32_t i = 0; i < opt->n_loras; i++) {
+    const ds41_lora_matrix& m = opt->loras[i];
+    if (m.layer >= DS41_N_LAYER || m.target >= DS41_N_LORA_TARGETS || !m.rank || !m.a || !m.b ||
+        !std::isfinite(m.scale) || seen[m.layer][m.target]) {
+      fprintf(stderr, "ds41: LoRA matrix %u is invalid\n", i);
+      return false;
+    }
+    seen[m.layer][m.target] = true;
+    const ds41_layer_weights& l = e->weights->layer[m.layer];
+    const ds41_tensor* w = m.target == DS41_LORA_ATTN_OUTPUT_B   ? l.attn_output_b
+                           : m.target == DS41_LORA_FFN_DOWN_SHEXP ? l.ffn_down_shexp
+                                                                  : l.ffn_down_exps;
+    const bool experts = m.target == DS41_LORA_FFN_DOWN_EXPS;
+    const uint64_t in = w->dim[0], out = experts ? w->dim[1] : w->elements / w->dim[0];
+    if (m.in != in || m.out != out || m.experts != (experts ? e->weights->n_expert : 0)) {
+      fprintf(stderr,
+              "ds41: LoRA for blk.%u.%s is %u x %u (%u experts); the model's matrix is %" PRIu64 " x %" PRIu64
+              " (%u experts)\n",
+              m.layer, DS41_LORA_TARGETS[m.target], m.out, m.in, m.experts, out, in, experts ? e->weights->n_expert : 0);
+      return false;
+    }
+    floats += (uint64_t)std::max(m.experts, 1u) * m.rank * (m.in + m.out);
+    e->lora_max_rank = std::max(e->lora_max_rank, m.rank);
+  }
+  /* Rows of a down launch: routed slots of the largest batch; larger
+   * batches go through in chunks. */
+  e->lora_t_rows = (uint32_t)(DS41_MAX_PREFILL_BATCH * DS41_N_EXPERT_USED);
+  void* p = nullptr;
+  void* t = nullptr;
+  if (hipMalloc(&p, floats * sizeof(float)) != hipSuccess ||
+      hipMalloc(&t, (uint64_t)e->lora_t_rows * e->lora_max_rank * sizeof(float)) != hipSuccess) {
+    if (p)
+      (void)hipFree(p);
+    return false;
+  }
+  e->lora_buf = static_cast<float*>(p);
+  e->lora_t = static_cast<float*>(t);
+  float* next = e->lora_buf;
+  for (uint32_t i = 0; i < opt->n_loras; i++) {
+    const ds41_lora_matrix& m = opt->loras[i];
+    const uint64_t na = (uint64_t)std::max(m.experts, 1u) * m.rank * m.in;
+    const uint64_t nb = (uint64_t)std::max(m.experts, 1u) * m.rank * m.out;
+    if (hipMemcpy(next, m.a, na * sizeof(float), hipMemcpyHostToDevice) != hipSuccess ||
+        hipMemcpy(next + na, m.b, nb * sizeof(float), hipMemcpyHostToDevice) != hipSuccess)
+      return false;
+    e->lora[m.layer][m.target] = {next, next + na, m.rank, m.in, m.out, m.scale};
+    next += na + nb;
+  }
+  gufo::server::Logger::LogFormatted(gufo::server::LogLevel::kInfo, "ds41",
+                                     "LoRA adapter: %u matrices, rank up to %u, %.2f MiB", opt->n_loras,
+                                     e->lora_max_rank, (double)floats * sizeof(float) / 1048576.0);
+  return true;
+}
+
 int ds41_engine_open(ds41_engine** out, const ds41_engine_options* opt) {
   if (out)
     *out = nullptr;
@@ -2005,6 +2146,18 @@ int ds41_engine_open(ds41_engine** out, const ds41_engine_options* opt) {
       e->expert_histogram = strdup((std::string(opt->model_path) + ".expert-histogram").c_str());
       seed_experts(e);
     }
+    if (!upload_loras(e, opt)) {
+      fprintf(stderr, "ds41: failed to load the LoRA adapter\n");
+      ds41_engine_close(e);
+      *out = nullptr;
+      return 1;
+    }
+    if (!upload_directions(e, opt)) {
+      fprintf(stderr, "ds41: failed to load the direction adapter\n");
+      ds41_engine_close(e);
+      *out = nullptr;
+      return 1;
+    }
 
     *out = e;
     return 0;
@@ -2083,6 +2236,12 @@ void ds41_engine_close(ds41_engine* e) {
     return;
   if (e->image_bias)
     (void)hipFree(e->image_bias);
+  if (e->steer_vectors)
+    (void)hipFree(e->steer_vectors);
+  if (e->lora_buf)
+    (void)hipFree(e->lora_buf);
+  if (e->lora_t)
+    (void)hipFree(e->lora_t);
   if (e->weights && e->weights->router_bf16)
     (void)hipFree(e->weights->router_bf16);
   ds41_expert_store_log(e->expert_store);

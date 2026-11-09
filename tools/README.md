@@ -10,6 +10,7 @@ checkout.
 | Script | Use |
 | --- | --- |
 | `ds41/engram_split.py` | Set the shard an Engram file declares, on a copy or in place, to share one table across builds |
+| `ds41/direction_adapter.py` | Convert mako `.abl` files and rank-1 abliteration LoRAs to direction adapters for `--adapter`, or inspect one |
 | `ds41/pack_expert_tails.py` | Pack every routed expert's tail into one file for a second drive |
 | `ds41/import_expert_rank.py` | Convert Xolotl's published expert ranking to the built-in `runtime/expert_rank.inc` |
 | `ds41/import_pruned_experts.py` | Convert an expert-pruned release's kept-experts list to a built-in table |
