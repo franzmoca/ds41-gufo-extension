@@ -3845,9 +3845,15 @@ Six server starts in alternating order, short request: expert cache
 97.37-97.41 GiB against 97.04-97.13 GiB with 64. In an A/B against the
 previous build (64 streams, Gufo `4938016`), outputs are identical and
 prefill and decode are within ±1.5%. Three of those four runs left
-0.4-0.6 GiB unused: the startup seed stops at the first chunk where
-`MemAvailable` reads at or below the 2 GiB reserve, which happens while
-the previous run's page cache is still being reclaimed (BACKLOG).
+0.4-0.6 GiB unused (96.79-96.88 GiB): the second seed compared free memory
+with the whole 2 GiB reserve, which the cache limit already holds back for
+the first prompt's buffers, so a dip while it ran stopped it at 2.0-2.2 GiB
+free, and once the first prompt allocated those buffers misses could no
+longer grow the cache back. After the fit, the cache now grows toward its
+limit while 1 GiB stays free. After the same long-prefill run, the cache
+reaches 97.44 GiB with 2.03 GiB free at ready and at least 1.22 GiB free
+through the run; two short starts give 97.32-97.38 GiB with 2.12 GiB
+free at ready.
 
 ## E105 — eviction by frequency class (retained)
 

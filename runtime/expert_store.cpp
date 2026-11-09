@@ -47,6 +47,13 @@ constexpr uint64_t kGiB = 1ull << 30;
  * and transient prefill peaks. The server sizes the cache after its sessions
  * instead (ds41_expert_store_set_reserve). */
 constexpr uint64_t kReserve = 4 * kGiB;
+/* Free memory below which the cache stops growing once the server has sized
+ * it after its sessions: the limit already holds back the buffers the first
+ * prompt allocates, so only transient prefill peaks (~0.3-0.6 GiB) and margin
+ * against swap remain. Comparing against the whole reserve stopped the seed
+ * 0.4-0.6 GiB short whenever free memory dipped while it ran, and the first
+ * prompt's buffers then kept misses from growing the cache back. */
+constexpr uint64_t kLiveFloor = 1 * kGiB;
 /* Rows of the compact prefetch stage: two parity halves, so the job a layer
  * adopts and the job submitted for the layer after never share rows. A
  * whole-layer set measured 3.6 GiB; jobs touch only the predicted experts
@@ -771,11 +778,17 @@ struct ds41_expert_store {
       (void)hipStreamDestroy(routes_stream);
   }
 
+  // Free memory the cache never grows into at this moment.
+  uint64_t live_floor() const {
+    return sized_after_sessions ? std::min(reserve, kLiveFloor) : reserve;
+  }
+
   bool grow(uint32_t size_class) {
     const uint64_t free_bytes = ds41_expert_available_memory();
-    if (free_bytes <= reserve)
+    const uint64_t floor = live_floor();
+    if (free_bytes <= floor)
       return false;
-    uint64_t available = free_bytes - reserve;
+    uint64_t available = free_bytes - floor;
     if (stats.cache_bytes >= cache_limit)
       return false;
     available = std::min(available, cache_limit - stats.cache_bytes);
@@ -1254,8 +1267,8 @@ bool seed_ranked(ds41_expert_store* store, std::vector<SeedItem> ranked,
       if (!ranked_set[l][e])
         ranked.push_back({l, e, 0});
   const uint64_t available = ds41_expert_available_memory();
-  const uint64_t free_budget =
-      available > store->reserve ? available - store->reserve : 0;
+  const uint64_t floor = store->live_floor();
+  const uint64_t free_budget = available > floor ? available - floor : 0;
   // Before the sessions exist, leave capacity for their allocations and for
   // experts learned from the actual request; once they exist, growing the
   // last sixteenth during the first prompt slows it, so seed everything.
@@ -1297,7 +1310,7 @@ bool seed_ranked(ds41_expert_store* store, std::vector<SeedItem> ranked,
     }
     if (ids.empty())
       continue;
-    if (ds41_expert_available_memory() <= store->reserve)
+    if (ds41_expert_available_memory() <= floor)
       break;
     while (ids.size() % DS41_N_EXPERT_USED)
       ids.push_back(ids.back());

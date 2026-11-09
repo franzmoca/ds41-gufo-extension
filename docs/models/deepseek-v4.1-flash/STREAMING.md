@@ -39,9 +39,10 @@ only the resident tensors, so the dense weights go through the device heap.
 
 - **Slots by size class.** Each distinct per-layer expert size (gate, up and
   down together, rounded to 256 B) is a class. A class grows by 128 MiB
-  managed-memory chunks while the cap and the reserve allow (4 GiB until
-  the server fits the cache, then 2 GiB plus RAM-cache backing still to
-  commit). An expert
+  managed-memory chunks while the cap and the reserve allow (4 GiB of free
+  memory until the server fits the cache; after the fit, the limit holds
+  back 2 GiB plus RAM-cache backing still to commit, and the cache grows
+  toward it while 1 GiB stays free). An expert
   takes a free slot of its own class, or the smallest larger free slot once
   its class can no longer grow.
 - **Admission and eviction.** Each expert counts its uses (its route count,

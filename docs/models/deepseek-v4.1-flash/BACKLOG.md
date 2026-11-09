@@ -81,12 +81,10 @@ the decoder replay's drive-bound stall (E86). Replay data:
   most-routed experts; ~0.9 GiB to the cache. 48 rows slow a 3.5K prompt
   on a cold cache by 5-9%. The prompt cache keeps 16 transfer streams plus one
   per session instead of 64 (gufo-org/gufo#1108): +0.3 GiB of cache.
-- **Startup seed stops early after heavy work** (E104): the second seed
-  stops at the first 128 MiB chunk where `MemAvailable` reads at or below
-  the 2 GiB reserve. After a run with long prefills, 3 of 4 starts left
-  0.4-0.6 GiB unused, and the cache never grows later (96.84 GiB through a
-  whole run). Re-read before stopping, or let misses grow the cache up to
-  its limit.
+- **Startup seed stops early** (done, E104): once the server has fitted the
+  cache, it grows toward its limit while 1 GiB stays free, instead of
+  stopping at the 2 GiB reserve the limit already holds back. 3 of 4 starts
+  after long prefills had left 0.4-0.6 GiB unused for the whole run.
 - **Swap bursts in long single-session runs** (E93): ~20M pages out around
   the 11th-15th fresh 50-64K prompt in both builds, prefill down to
   450-640 tok/s for those prompts; the server's own swap stays 9-20 MB.
