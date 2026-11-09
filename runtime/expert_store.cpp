@@ -73,8 +73,8 @@ constexpr uint32_t kSweepTokens = 1024;
 
 constexpr uint32_t kSeedPerLayer = DS41_MAX_EXPERT;
 constexpr uint32_t kNoSlot = std::numeric_limits<uint32_t>::max();
-/* Eviction candidates kept per size class: the kVictims lowest decayed
- * scores of the slots an expert of that class could take, rebuilt by one
+/* Eviction candidates kept per size class: the kVictims lowest keep values
+ * of the slots an expert of that class could take, rebuilt by one
  * scan when the list runs dry or ages past kVictimsTicks prepares. Pops
  * skip slots freed, reoccupied or used since the build, so the lists need
  * no invalidation and the order among untouched slots is the scan's. */
@@ -123,9 +123,32 @@ struct Entry {
   /* Atomic: the prefetch submission thread reads the target layer's slots
    * while the evaluation thread promotes or evicts entries. */
   std::atomic<uint32_t> slot{kNoSlot};
-  uint64_t last = 0;
-  double score = 0;
+  uint64_t last = 0;  // tick of the last use; victim lists detect uses by it
+  /* Eviction by frequency class (E105): `uses` counts uses (at most
+   * kUseCap per prepare) decaying with a half-life of kUseHalfLife tokens of
+   * the layer's clock; at each use the expert takes class floor(log2(uses)),
+   * at most kMaxClass, and `protect` = 2^class. The victim is the expert with
+   * the largest age / protect: an expert used twice as often may stay unused
+   * twice as long. */
+  uint64_t used_at = 0;  // layer clock at the last use
+  double uses = 0;
+  double protect = 1;
 };
+constexpr double kUseHalfLife = 2048.0;
+constexpr uint32_t kUseCap = 4;
+constexpr double kMaxClass = 7.0;
+/* A prompt chunk advances its layer's clock by at most this many rows, so
+ * one long prompt does not age the whole decode working set at once. */
+constexpr uint64_t kClockRows = 16;
+/* Seeded experts start with half their ranking weight in uses: enough to
+ * serve a cold prompt, low enough that decode's working set displaces them. */
+constexpr double kSeedUses = 0.5;
+
+double protect_of(double uses) {
+  if (uses < 1.0)
+    return 1.0;
+  return std::exp2(std::min(kMaxClass, std::floor(std::log2(uses))));
+}
 
 struct Slot {
   uint8_t* data = nullptr;
@@ -234,10 +257,6 @@ bool read_direct(int fd, uint8_t* dst, uint64_t bytes, uint64_t offset,
       return false;
   }
   return true;
-}
-
-double decayed(const Entry& entry, uint64_t now) {
-  return entry.score / (1.0 + static_cast<double>(now - entry.last) / 1600.0);
 }
 
 /* The queue is sorted before dispatch. Workers read independent ranges into
@@ -605,6 +624,13 @@ struct ds41_expert_store {
   const PrunedBuild* pruned = nullptr;
   std::array<std::array<Source, 3>, DS41_N_LAYER> source{};
   std::array<std::array<Entry, DS41_MAX_EXPERT>, DS41_N_LAYER> entries{};
+  std::array<uint64_t, DS41_N_LAYER> clock{};  // per layer, see kClockRows
+  /* How much an expert deserves its slot: −age / protect; the lowest is
+   * evicted first. */
+  double keep(uint32_t l, uint32_t x) const {
+    const Entry& e = entries[l][x];
+    return -static_cast<double>(clock[l] - e.used_at) / e.protect;
+  }
   /* The demand stage (whole-layer, rows indexed by expert id) and the
    * compact prefetch stage (two parity halves of job-relative rows).
    * Demand reads are ordered behind the previous layer's compute by the
@@ -670,12 +696,12 @@ struct ds41_expert_store {
   std::vector<std::vector<uint32_t>> free_slots;  // per class
   std::vector<uint64_t> grow_failure;             // tick, per class
   /* Eviction candidates, one list per size class: the kVictims lowest
-   * decayed scores at build time of the occupied slots an expert of that
+   * keep values at build time of the occupied slots an expert of that
    * class could take, ascending. Pops skip slots freed, reoccupied or used
    * since the build, so the lists need no invalidation; one
    * full scan rebuilds a list when it runs dry or ages out. */
   struct Victim {
-    double score;           // decayed score at build
+    double score;           // keep value at build
     uint32_t slot;
     uint32_t layer, expert;  // the occupant at build
     uint64_t last;           // its last use at build
@@ -773,7 +799,7 @@ struct ds41_expert_store {
   }
 
   /* Refills the class's victim list with one pass over the slots: the
-   * kVictims lowest decayed scores among occupied slots of class `own` or
+   * kVictims lowest keep values among occupied slots of class `own` or
    * larger, ascending. A batch's protected hits are handled at pop time
    * (the protection differs per prepare). */
   void rebuild_victims(uint32_t own) {
@@ -789,7 +815,7 @@ struct ds41_expert_store {
       if (s.layer == kNoSlot || s.size_class < own)
         continue;
       const Entry& e = entries[s.layer][s.expert];
-      const Victim v{decayed(e, tick), i, s.layer, s.expert, e.last};
+      const Victim v{keep(s.layer, s.expert), i, s.layer, s.expert, e.last};
       if (list.entries.size() < kVictims) {
         list.entries.push_back(v);
         std::push_heap(list.entries.begin(), list.entries.end(), lower);
@@ -806,7 +832,7 @@ struct ds41_expert_store {
    * its weight table points at their slots and its kernels run after the
    * admission copies, so they are never victims. (A miss admitted earlier
    * in the same batch may be: its table entry is the stage row.) */
-  uint32_t acquire(uint32_t layer, uint32_t expert, bool allow_evict,
+  uint32_t acquire(uint32_t layer, bool allow_evict,
                    const std::array<bool, DS41_MAX_EXPERT>& hits) {
     const uint32_t own = layer_class[layer];
     if (free_slots[own].empty() && grow_failure[own] != tick && !grow(own))
@@ -820,7 +846,6 @@ struct ds41_expert_store {
       }
     if (!allow_evict)
       return kNoSlot;
-    const double incoming = decayed(entries[layer][expert], tick);
     bool rebuilt = false;
     for (;;) {
       VictimList& list = victims[own];
@@ -837,9 +862,7 @@ struct ds41_expert_store {
             entries[s.layer][s.expert].last != v.last ||
             (s.layer == layer && hits[s.expert]))
           continue;  // freed, reoccupied, used since the build, or protected
-        const double score = decayed(entries[s.layer][s.expert], tick);
-        if (incoming < score)
-          return kNoSlot;  // the remaining victims all outscore it
+        // The incoming expert was just used (age 0), so it outranks any victim.
         entries[s.layer][s.expert].slot = kNoSlot;
         return victim;
       }
@@ -850,8 +873,8 @@ struct ds41_expert_store {
   }
 
   /* Frees the newest chunks until the cache fits `limit`, keeping the
-   * highest-scored experts of each size class: survivors in the freed chunks
-   * move into the kept slots of the lowest-scored experts, which are evicted.
+   * highest keep values of each size class: survivors in the freed chunks
+   * move into the kept slots of the lowest, which are evicted.
    * Startup only: no prepare or prefetch may be running. */
   bool shrink_to(uint64_t limit) {
     if (stats.cache_bytes <= limit || chunks.empty())
@@ -883,7 +906,7 @@ struct ds41_expert_store {
       std::vector<uint32_t> all = kept;
       all.insert(all.end(), moving.begin(), moving.end());
       const auto score = [&](uint32_t i) {
-        return decayed(entries[slots[i].layer][slots[i].expert], tick);
+        return keep(slots[i].layer, slots[i].expert);
       };
       std::stable_sort(all.begin(), all.end(), [&](uint32_t a, uint32_t b) {
         return score(a) > score(b);
@@ -1267,8 +1290,9 @@ bool seed_ranked(ds41_expert_store* store, std::vector<SeedItem> ranked,
     std::vector<uint32_t> ids;
     for (const SeedItem& item : by_layer[l]) {
       ids.push_back(item.expert);
-      store->entries[l][item.expert].score =
-          std::min(8.0, std::log2(1.0 + item.count));
+      Entry& seeded = store->entries[l][item.expert];
+      seeded.uses = kSeedUses * std::min(8.0, std::log2(1.0 + item.count));
+      seeded.protect = protect_of(seeded.uses);
       selected[l][item.expert] = true;
     }
     if (ids.empty())
@@ -1592,7 +1616,7 @@ void trace_snapshot(ds41_expert_store* store) {
   }
   for (uint32_t l = 0; l < DS41_N_LAYER; ++l)
     for (uint32_t e = 0; e < store->n_expert; ++e) {
-      trace_put(f, store->entries[l][e].score);
+      trace_put(f, store->entries[l][e].uses);
       trace_put(f, store->entries[l][e].last);
     }
 }
@@ -1681,6 +1705,7 @@ bool ds41_expert_store_prepare(ds41_expert_store* store, uint32_t layer,
   ++store->tick;
   if (layer == 0)
     store->stats.tokens += n_tokens;
+  const uint64_t now = store->clock[layer];
   std::array<bool, DS41_MAX_EXPERT> missing{}, admit{}, hits{};
   for (uint32_t e = 0; e < DS41_MAX_EXPERT; ++e) {
     if (!counts[e])
@@ -1691,8 +1716,11 @@ bool ds41_expert_store_prepare(ds41_expert_store* store, uint32_t layer,
       store->stats.hits += counts[e];
     missing[e] = entry.slot == kNoSlot;
     hits[e] = !missing[e];
-    entry.score = decayed(entry, store->tick) + std::min(counts[e], 4u) +
-                  (recent[e] ? 4.0 : 0.0);
+    const double idle = static_cast<double>(now - entry.used_at);
+    entry.uses = entry.uses * std::exp2(-idle / kUseHalfLife) +
+                 std::min(counts[e], kUseCap);
+    entry.protect = protect_of(entry.uses);
+    entry.used_at = now;
     entry.last = store->tick;
     // A large prefill scans most experts. Admit its final rows and unusually
     // frequent experts, rather than displacing the decode working set.
@@ -1832,7 +1860,7 @@ bool ds41_expert_store_prepare(ds41_expert_store* store, uint32_t layer,
       continue;
     // Fill unused capacity during a scan. Once full, only promoted prefill
     // experts may displace the existing working set.
-    const uint32_t slot_id = store->acquire(layer, e, admit[e], hits);
+    const uint32_t slot_id = store->acquire(layer, admit[e], hits);
     if (slot_id == kNoSlot)
       continue;
     Slot& slot = store->slots[slot_id];
@@ -1901,6 +1929,9 @@ bool ds41_expert_store_prepare(ds41_expert_store* store, uint32_t layer,
     store->logged_stats = s;
     store->logged_tokens = store->stats.tokens;
   }
+  // After admission: a victim's age counts this batch's tokens only from the
+  // next prepare of its layer on, as measured in E105.
+  store->clock[layer] += std::min<uint64_t>(n_tokens, kClockRows);
   return true;
 }
 

@@ -261,6 +261,24 @@ int main() {
   check(aged, "routed victim aging");
   check(run(10, {0, 9, 9, 9, 9, 9}), "routed hit kept with an admitted miss");
   ds41_expert_store_destroy(store);
+  // Frequency classes: expert 0, routed in eight batches, outlasts expert 9,
+  // routed once and more recently (LRU would evict expert 0).
+  store = ds41_expert_store_create(&f.model, &f.weights, 4 * kSlot);
+  bool frequent = store != nullptr;
+  for (int i = 0; i < 8 && frequent; ++i)
+    frequent = run(5, {0, 0, 0, 0, 0, 0});
+  frequent = frequent && run(5, {9, 9, 9, 9, 9, 9});
+  for (int i = 0; i < 6 && frequent; ++i)
+    frequent = run(5, {1, 1, 1, 2, 2, 2});
+  check(frequent && run(5, {3, 3, 3, 3, 3, 3}), "frequency class setup");
+  before = ds41_expert_store_get_stats(store);
+  check(run(5, {0, 0, 0, 0, 0, 0}), "frequent expert stage bytes");
+  after = ds41_expert_store_get_stats(store);
+  check(after.hits - before.hits == 6, "frequent expert kept");
+  check(run(5, {9, 9, 9, 9, 9, 9}), "one-batch expert stage bytes");
+  check(ds41_expert_store_get_stats(store).hits == after.hits,
+        "one-batch expert evicted first");
+  ds41_expert_store_destroy(store);
   // Background prefetch: the listed experts stage without a prepare, the
   // next prepare of that layer adopts them without re-reading, and any other
   // layer drops the job and reads its own experts again.

@@ -34,7 +34,7 @@ follow in their own sections.
 | ---: | ---: | --- | --- | --- |
 | 1 | 30 | More memory for the expert cache | Replays: +3.7 GiB −28% decode misses; the decoder replay's cold experts (0.91 s) are capacity-bound (E86). E93 gave one session +1.9 GiB | Compact demand stage (~3 GiB) |
 | 2 | 37 | Cheap prefetch adoption, then every-layer decode prediction | +2.3-2.8% decode simulated once adoption is free (E89); Belady would halve decode misses (E92) | Stop resolving a running job on hit layers |
-| 3 | 31 | Eviction scoring and prompt admission | Decay 3,200 / bonus 8: −3.6% / −7.5% decode misses replayed; served chat 19.9 / 20.2 against 19.4-19.5 tok/s, agent inconclusive (E92) | Fixed-conversation agent replay of `wip/ds41-eviction-score` |
+| 3 | 31 | Eviction scoring and prompt admission | Frequency classes retained (E105); admitting every expert routed twice cut follow-up misses 32% but slowed prefill | Re-measure admission after direct-to-slot uploads |
 | 4 | 9 | Stable-boundary prefill pass per chat request | 64.6 ms per chat request (measured pass cost) | Snapshot or skip the N−3 capture |
 | 5 | 4 | Launch gaps between decode kernels | ~2.5 µs dispatch latency before each of ~975 launches, ~2.4 ms/token (E44, E60); fusions 0.2-0.5% each | Event-timed untraced share, then fusions |
 | 6 | 3 | Expert reads for rejected verification rows | Each row past the first adds ~4.5 ms of read stall (DECODE.md); unmeasured | Charge a row its own miss bytes in the width choice |
@@ -104,12 +104,13 @@ only the layers that miss most) or a more selective trigger.
 
 ### 31. Eviction scoring and prompt admission
 
-The scan is gone (E91/E92). **Score:** the current rule (decay 1,600,
-bonus 4) sits between recency, which unrelated requests reward, and
-frequency, which long conversations reward; decay 3,200 / bonus 8 is the
-only setting that helps both traces, but the unseeded agent sessions
-diverged, so it is parked on `wip/ds41-eviction-score` until a
-fixed-conversation replay (E92). **Admission:** admitting every expert
+The scan is gone (E91/E92). **Eviction:** frequency classes replaced the
+decayed score (E105): −6% reads on a replayed agent session, −10% on a
+code prompt after a chat, +1-2% on a cold first prompt. The seeded
+experts' starting weight sets that trade (none: cold 15K +4.6%; full: chat
+decode +3.2%); a better start would separate prompt-serving experts from
+decode's, e.g. seed from prefill and decode rankings apart. Belady still
+halves decode misses (E92). **Admission:** admitting every expert
 routed twice cut follow-up misses 32% but slowed prefill through
 stage-to-slot copies ([runs](EXPERIMENTS.md#item-31-prompt-admission-served-runs));
 re-measure after item 30's direct-to-slot uploads. More admission evicts
@@ -432,6 +433,7 @@ in EXPERIMENTS.md.
 | Greedy DSpark width policy (DECODE.md lever 1) | Chat 16.5-16.9 → 17.6-18.9, code 26.6-27.4 → 28.3-28.7, long 24.7-26.2 → 26.4-26.7 tok/s | E87 |
 | Top-p softmax totals on the device (DECODE.md lever 4) | Sampled DSpark +0.3 to +1.1 tok/s, AR sampled +0.1 to +0.2 | E88 |
 | Eviction victim lists, exact pops (item 31) | Scan removed; served speed unchanged (scan ≤ ~0.15 ms per admission) | E91, E92 |
+| Eviction by frequency class (item 31) | Agent replay −0.9% total, −6% reads; code prompt after a chat −10%; cold 2K/15K +1-2% | E105 |
 | Two-wave prefill, gate+up then down | pp2048 1,109 → 1,160 tok/s; served −1.7 s / −1.2 s, then −1.2% | E82, E84 |
 | Layer-0 prediction, Engram rows in layer order | Encoder read idle 1.53 → 0.96 s over two documents | E83 |
 | Engram lookahead | Engram waits 1.21 → 0.50 s; −2.1% on a 58K prompt | E85 |
