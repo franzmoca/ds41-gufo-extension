@@ -7,6 +7,11 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ### Performance
 
+* **streaming:** the prompt cache keeps 16 transfer streams plus one per
+  session instead of Gufo's 64, which leaves streamed builds ~0.3 GiB more
+  expert cache. The extension now needs Gufo's extension API 0.2.17
+  ([E104](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained)).
+
 * **streaming:** the prefetch stage holds 96 instead of 192 experts and keeps
   the experts most tokens route to when a prompt predicts more, leaving
   ~0.9 GiB more to the expert cache, with identical outputs
