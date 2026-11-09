@@ -3,12 +3,18 @@
 prefetch_sim.py's cache model without prefetch: the store's score and
 decay/bonus variants, LRU, per-expert reuse-interval prediction, and
 Belady's offline optimum (evict the expert whose next use is farthest), with
-and without its admission bypass.
+and without its admission bypass. `current` and prefetch_sim.py's cache
+model are the store's rule before E105 (decayed score); the store now evicts
+by frequency class, `classlru:2048/1/16/0/4` (its seeded uses at half the
+ranking weight are not modeled); traces record those uses where the score was.
 
   evict_sim.py TRACE                      # the default rule set
   evict_sim.py TRACE current,lru,belady   # named rules
   evict_sim.py TRACE 'grid:1/4;2/8'       # multiple of prefetch_sim.DECAY / recency bonus
   evict_sim.py TRACE 'reuse:reuse-b/4000/0.25'  # kind / first gap / gap rate
+  evict_sim.py TRACE 'classlru:2048/1/16/0/4/0'  # llama.cpp #31233: half-life tokens /
+      # prefill counts as use / clock rows per prepare / store-score prefill gate /
+      # CRF per use min(count, n) / recent-rows bonus
 """
 import sys
 from pathlib import Path
@@ -25,6 +31,23 @@ class Rule(ps.Cache):
         self.g0 = kw.get("g0", 4000.0)
         self.grate = kw.get("grate", 0.25)
         self.gap = np.full((snap.n_layer, snap.n_expert), np.nan)
+        # ClassLRU (llama.cpp #31233): uses decayed by a per-layer token clock,
+        # class floor(log2 CRF) set at each use, victim max age / 2^class.
+        self.half = kw.get("half", 128.0)
+        self.prefill_uses = kw.get("prefill_uses", True)
+        self.crf = np.zeros((snap.n_layer, snap.n_expert))
+        self.cls = np.zeros((snap.n_layer, snap.n_expert))
+        self.luse = np.zeros((snap.n_layer, snap.n_expert))
+        self.clock = np.zeros(snap.n_layer)
+        if kw.get("seed_crf"):  # history from the store's seed score
+            self.crf = snap.score.copy()
+            ok = self.crf >= 1
+            self.cls[ok] = np.minimum(7, np.floor(np.log2(self.crf[ok])))
+        self.clock_cap = kw.get("clock_cap", 1 << 30)
+        self.gate = kw.get("gate", False)  # prefill admission by the store's score
+        self.cur_n = 0
+        self.rbonus = kw.get("rbonus", 0.0)  # CRF added when routed in the last 16 rows
+        self.inc_cap = kw.get("inc_cap", 1)  # CRF added per use: min(count, inc_cap)
         if kind in ("belady", "belady-admit"):
             L, E = snap.n_layer, snap.n_expert
             occ = {}
@@ -51,6 +74,8 @@ class Rule(ps.Cache):
             return -nxt.astype(float)
         if self.kind in ("belady", "belady-admit"):
             return -self.nxt[sl, se].astype(float)
+        if self.kind == "classlru":
+            return -(self.clock[sl] - self.luse[sl, se]) / 2.0 ** self.cls[sl, se]
         return self.score[sl, se] / (1.0 + (self.tick - self.last[sl, se]) / self.policy.decay)
 
     def prepare(self, layer, ids):
@@ -62,6 +87,20 @@ class Rule(ps.Cache):
                     d = self.tick + 1 - self.last[layer, e]
                     g = self.gap[layer, e]
                     self.gap[layer, e] = d if np.isnan(g) else g + self.grate * (d - g)
+        self.cur_n = ids.shape[0]
+        if self.kind == "classlru":
+            n = ids.shape[0]
+            if n <= 16 or self.prefill_uses:
+                es, cnt = np.unique(ids[ids >= 0], return_counts=True)
+                c = (self.crf[layer, es] * np.exp2(-(self.clock[layer] - self.luse[layer, es]) / self.half)
+                     + np.minimum(cnt, self.inc_cap))
+                if self.rbonus:
+                    tail = ids[max(0, n - 16):]
+                    c = c + self.rbonus * np.isin(es, tail[tail >= 0])
+                self.crf[layer, es] = c
+                self.cls[layer, es] = np.minimum(7, np.floor(np.log2(c)))
+                self.luse[layer, es] = self.clock[layer]
+            self.clock[layer] += min(n, self.clock_cap)
         out = super().prepare(layer, ids)
         if self.kind in ("belady", "belady-admit"):
             for e in np.unique(ids[ids >= 0]):
@@ -87,7 +126,10 @@ class Rule(ps.Cache):
         idx = np.nonzero(live)[0]
         vals = self.value(self.s_layer[idx], self.s_expert[idx])
         j = int(np.argmin(vals))
-        if self.kind != "belady-admit" and self.value(np.array([layer]), np.array([expert]))[0] < vals[j]:
+        if self.kind == "classlru" and self.gate and self.cur_n > 16:
+            if self.decayed(layer, expert) < self.decayed(self.s_layer[idx[j]], self.s_expert[idx[j]]):
+                return None
+        elif self.kind != "belady-admit" and self.value(np.array([layer]), np.array([expert]))[0] < vals[j]:
             return None
         victim = int(idx[j])
         self.slot_of[self.s_layer[victim], self.s_expert[victim]] = -1
@@ -117,7 +159,15 @@ def main():
              ("decay /8", dict(decay=D / 8)), ("bonus 8", dict(recent_bonus=8.0)),
              ("bonus 16", dict(recent_bonus=16.0)), ("decay /2 bonus 8", dict(decay=D / 2, recent_bonus=8.0)),
              ("decay /4 bonus 8", dict(decay=D / 4, recent_bonus=8.0)), ("lru", {}), ("belady", {}), ("belady-admit", {})]
-    if len(sys.argv) > 2 and sys.argv[2].startswith("reuse:"):
+    if len(sys.argv) > 2 and sys.argv[2].startswith("classlru:"):
+        rules = [("current", {})]
+        for spec in sys.argv[2][9:].split(";"):
+            f = spec.split("/")
+            h, pf, cap, gate, inc, rb, sd = f + ["1073741824", "0", "1", "0", "0"][len(f) - 2:]
+            rules.append((f"classlru {h} {'pf' if pf == '1' else 'nopf'} cap {cap}{' gate' if gate == '1' else ''} inc {inc} rb {rb}{' seed' if sd == '1' else ''}",
+                          dict(kind="classlru", half=float(h), prefill_uses=pf == "1", clock_cap=int(cap),
+                               gate=gate == "1", inc_cap=int(inc), rbonus=float(rb), seed_crf=sd == "1")))
+    elif len(sys.argv) > 2 and sys.argv[2].startswith("reuse:"):
         rules = [("current", {})]
         for spec in sys.argv[2][6:].split(";"):
             k, g0, gr = spec.split("/")

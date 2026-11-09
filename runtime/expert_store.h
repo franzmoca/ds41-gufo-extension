@@ -57,7 +57,8 @@ bool ds41_expert_store_attach_tails(ds41_expert_store* store, const char* path);
 
 /* Re-sizes the cache from the memory free now, leaving reserve_bytes that it
  * never grows into, after allocating the prefetch stage: frees its newest
- * chunks, keeping the highest-scored experts, when it is over the new limit.
+ * chunks, keeping the experts eviction ranks highest, when it is over the
+ * new limit.
  * Call at startup once everything else long-lived is allocated, then seed
  * again to fill any room left. A nonzero cache_limit_bytes still bounds the
  * pool. False when the stage or the shrink failed. */

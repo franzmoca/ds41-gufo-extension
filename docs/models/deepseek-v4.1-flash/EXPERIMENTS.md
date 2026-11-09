@@ -138,6 +138,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E102](#e102--dspark-attention-one-block-per-head-retained) | DSpark/speculation | retained | Drafter pass bandwidth table; DSpark attention reads the shared keys once per head (162 → 41 µs isolated): sampled long +0.9% on identical drafts, greedy unchanged within noise, outputs identical. |
 | [E103](#e103--drafter-q4_k-projections-through-the-split-gemv-retained) | DSpark/speculation | retained | The drafter's multi-row Q4_K projections use the split GEMV (bit-exact): a stage's six projections at 6 rows ~514 → ~415 µs; sampled cycles −0.2 to −0.5%, identical outputs and drafts. |
 | [E104](#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained) | streaming | retained | Prefetch stage 192 → 96 rows, truncated wide jobs keep the most-routed experts; with 16 cache transfer streams the expert cache gains 1.0-1.5 GiB: prefill −0.1 to −2.6% (12K reuse −5.8% incl. one slow base run), greedy code −2.3% per cycle, outputs unchanged. 48 rows slowed a 3.5K prompt after a chat by 5-9%. |
+| [E105](#e105--eviction-by-frequency-class-retained) | expert cache | retained | ClassLRU-style eviction (llama.cpp #31233): use counts decaying over 2,048 tokens, victim max age / 2^class, seeded experts at half weight. Fixed-conversation agent replay −0.9% total, −6% reads; code prompt after a chat −10%; cold 2K/15K prompts +1-2%; outputs unchanged. |
 
 ## Milestones
 
@@ -3840,6 +3841,80 @@ policy's spread (E99). Outputs are identical. The stage is 96 rows by
 default; the 16 transfer streams need the gufo change. The 96-row stage
 was not measured without them; 16 streams alone gave the cache ~0.5 GiB
 earlier, with decode within noise.
+
+## E105 — eviction by frequency class (retained)
+
+BACKLOG item 31, after llama.cpp's ClassLRU
+([#31233](https://github.com/ggml-org/llama.cpp/pull/31233)): experts sit
+in frequency classes and one used twice as often may stay unused twice as
+long. The store's rule was one decayed score (decay 1,600 prepares, count up
+to 4 per prepare, +4 when routed in the batch's last 16 rows), evicting the
+lowest if it scored below the newcomer.
+
+**Rule now.** Each expert counts its uses (at most 4 per prepare), decaying
+with a half-life of 2,048 tokens of its layer's clock; a prompt chunk
+advances that clock by at most 16 rows, so one long prompt does not age the
+decode working set at once. At each use the expert takes class
+floor(log2(uses)), at most 7; the victim is the slot with the largest
+age / 2^class. Seeded experts start with half their ranking weight
+(log2(1 + count), at most 8) as uses. A just-used newcomer always outranks
+the victim, so the old score comparison is gone; prompt admission
+(final 16 rows and frequent experts) is unchanged.
+
+**Simulated** (`tools/ds41/evict_sim.py 'classlru:...'`, E92's two traces,
+decode misses against the old rule): llama.cpp's form (half-life 128,
++1 per use, clock by every row) −10.4% on the DECODE.md trace with +4.1 s
+modeled prefill stall, +8.7% on the agent trace. Half-life 2,048, clock
+capped at 16 rows and up to 4 per use: −8.6% / −7.7%, prefill stall +1.1 s
+/ −1.4 s. A recent-rows bonus, the old admission gate and longer half-lives
+changed little; seeded history at full weight cost DECODE.md decode +6.5%.
+
+**Served.** Streamed `UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision, one
+session, fresh server per run; arms by a temporary environment switch in
+one build. A fixed-conversation replay settles E92's divergence: one Pi
+agent session (creation, bugfix, edit ×5 in one conversation, 15/15 tasks)
+recorded through a proxy, its 53 requests resent verbatim with seed 1234
+(1.6K → 12K context, 10.7K new prompt tokens, 5,504 generated). Outputs and
+draft counts were identical in every run of every arm (tool-call ids
+aside).
+
+Agent replay (order C T K R R K T C, then H C C H; total ms per run):
+
+| Rule | Runs | MiB read per token | Decode s | Prefill s | Total s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Old (C) | 4 | 30.2-30.5 | 154.8-156.5 | 36.7-37.0 | 192.4-194.4 |
+| Decay 3,200 / bonus 8 (T) | 2 | 29.4-29.7 | 154.1-154.5 | 36.4-36.6 | 191.3-191.9 |
+| Class, no seed history (K) | 4 | 28.2-28.7 | 153.6-154.0 | 36.2-36.4 | 190.6-191.2 |
+| Class + recent-rows bonus (R) | 2 | 28.6-28.8 | 153.8 | 36.3-36.5 | 190.9-191.1 |
+| Class, full seed history (S) | 2 | 28.9 | 153.6-154.4 | 36.3-36.5 | 190.8-191.7 |
+| Class, half seed history (H, retained) | 2 | 28.5-28.7 | 153.0-154.9 | 36.2-36.4 | 189.9-192.1 |
+
+Route hits rose 97.8 → 98.0%. The seed history sets the trade between new
+prompts and decode. Without it (K) the prefill suite's 15K cold prompt took
++4.6% (both runs above both old runs; its demand reads +6%) and the code
+prompt +2.2%; at full weight (S) the code prompt after a chat took −12.7%
+(route hits 63 → 85%) but chat decode +3.2% (40-50 against ~30 MiB per
+token mid-reply). Half weight, against the old rule (DECODE.md `decode2` and
+the `prefill` workload, orders Q H C C H Q and C H H C; mean, ms):
+
+| Request | Old | Half seed | Change |
+| --- | ---: | ---: | ---: |
+| code prompt after a chat (3,477) | 5993 | 5398 | −9.9% (both runs) |
+| chat decode | 25508 | 25601 | +0.4% |
+| code decode | 18192 | 18055 | −0.8% |
+| long prompt (23,974) | 22274 | 22661 | +1.7% |
+| long decode | 19807 | 19756 | −0.3% |
+| prefill 2K (4 runs each) | 2722 | 2751 | +1.1% |
+| prefill 15K | 13838 | 14083 | +1.8% (old runs 13,439-14,238) |
+| prefill 20K | 18422 | 18257 | −0.9% |
+| prefill 24K | 21781 | 21528 | −1.2% |
+| prefill 12K, half reused | 2986 | 2906 | −2.7% (every new run faster) |
+
+Prefill-suite reads rose 3.7-6.9% per token. Retained for agent and chat
+use: −0.9% total and −6% reads on the replayed session, −10% on a code
+prompt after a chat answer, at +1-2% on a cold first prompt.
+`ds41.expert_store` checks that an expert routed in eight batches outlasts
+one routed once, more recently (it fails under plain LRU).
 
 ## Backlog measurements without an E-number
 

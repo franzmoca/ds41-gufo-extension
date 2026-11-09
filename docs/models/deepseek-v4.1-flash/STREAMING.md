@@ -44,14 +44,17 @@ only the resident tensors, so the dense weights go through the device heap.
   commit). An expert
   takes a free slot of its own class, or the smallest larger free slot once
   its class can no longer grow.
-- **Admission and eviction.** Each expert keeps a decayed use score, raised
-  by its route count (at most 4 per call) and by 4 when it is routed in the
-  last 16 rows of the batch. While free capacity remains, every read expert
-  is admitted. Once the cache is full, a large prefill admits only its final
-  16 rows and its unusually frequent experts (count ≥ max(4, tokens / 32)),
-  so a scan does not displace the decode working set. The victim is the
-  lowest-scored slot of the same or a larger class, and only if it scores
-  below the newcomer; a larger expert never takes a smaller slot. A batch's
+- **Admission and eviction.** Each expert counts its uses (its route count,
+  at most 4 per call), decaying with a half-life of 2,048 tokens of its
+  layer's clock, which a prompt chunk advances by at most 16; at each use it
+  takes frequency class floor(log2(uses)), at most 7. Seeded experts start
+  at half their ranking weight. While free capacity remains, every read
+  expert is admitted. Once the cache is full, a large prefill admits only
+  its final 16 rows and its unusually frequent experts (count ≥ max(4,
+  tokens / 32)), so a scan does not displace the decode working set. The
+  victim is the slot of the same or a larger class with the largest
+  age / 2^class, so an expert used twice as often may stay unused twice as
+  long (E105); a larger expert never takes a smaller slot. A batch's
   own hits are never victims: its weight table points at their slots, and
   the admission copies land before its kernels run.
 - **Startup seed.** The cache is filled at load from the built-in ranking of

@@ -12,6 +12,13 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   ~0.9 GiB more to the expert cache, with identical outputs
   ([E104](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained)).
 
+* **streaming:** the expert cache evicts by frequency class: an expert used
+  twice as often may stay unused twice as long. A replayed agent session
+  reads 6% less and runs ~1% faster, and a code prompt after a chat answer
+  is processed 10% faster, at 1-2% on a cold first prompt; outputs are
+  identical
+  ([E105](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e105--eviction-by-frequency-class-retained)).
+
 * **dspark:** greedy decoding resumes drafting as soon as a probe shows that it
   pays, and every request starts with a fresh draft policy. Greedy chat decodes
   4-7% faster and code up to 7.5% faster on streamed builds, with identical
