@@ -3838,9 +3838,16 @@ The expert cache reaches 96.9-97.4 GiB against 95.4-96.0, decode reads
 11.3 → 10.6 MiB per token; read wait per token is unchanged (2.83-2.86 ms),
 so most of the reads saved were already hidden. Greedy chat follows the
 policy's spread (E99). Outputs are identical. The stage is 96 rows by
-default; the 16 transfer streams need the gufo change. The 96-row stage
-was not measured without them; 16 streams alone gave the cache ~0.5 GiB
-earlier, with decode within noise.
+default. The stream count followed with gufo-org/gufo#1108: 16 for
+batches plus one per session (17 with one session), on Gufo `fe2694bc`.
+64 streams take 570 MiB of device memory at creation and 17 take 194 MiB.
+Six server starts in alternating order, short request: expert cache
+97.37-97.41 GiB against 97.04-97.13 GiB with 64. In an A/B against the
+previous build (64 streams, Gufo `4938016`), outputs are identical and
+prefill and decode are within ±1.5%. Three of those four runs left
+0.4-0.6 GiB unused: the startup seed stops at the first chunk where
+`MemAvailable` reads at or below the 2 GiB reserve, which happens while
+the previous run's page cache is still being reclaimed (BACKLOG).
 
 ## E105 — eviction by frequency class (retained)
 

@@ -93,11 +93,12 @@ On November 8, 2026, on streamed `UD-IQ2_XXS` and the resident Coder with DSpark
 
 ## Differences from the fork
 
-- Gufo creates 64 cache transfer streams, the fork 16. The extra streams hold about
-  0.4 GiB of GPU memory: streamed builds get that much less expert cache, with no
-  measurable speed change, and resident `IQ1_M` with vision gets the smaller prefill
-  batch above (the fork gets 1,296 tokens, so a 24K-token prompt prefills in 20.4 s
-  instead of 24.6 s).
+- The prompt cache keeps 17 transfer streams with one session (16 plus one per
+  session); the fork kept 16. Before Gufo let extensions set the count, the extension
+  had 64, which held about 0.4 GiB more GPU memory: streamed builds got that much less
+  expert cache, and resident `IQ1_M` with vision got the smaller prefill batch above
+  (the fork gets 1,296 tokens, so a 24K-token prompt prefills in 20.4 s instead of
+  24.6 s).
 - Gufo's 4 GiB heap reserve can trim the prompt-cache backing at startup (seen once in
   four runs: 829 MiB instead of 1 GiB, with no speed change).
 - The engine-against-oracle checks in

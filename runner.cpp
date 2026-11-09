@@ -48,6 +48,10 @@ constexpr std::size_t kStreamedRamShareBytes = std::size_t{3} << 30;
 constexpr std::size_t kStreamedDiskRamShareBytes = std::size_t{1} << 30;
 // What the host's backing commits before readiness.
 constexpr std::size_t kBackingGrowAheadBytes = std::size_t{2} << 30;
+// Prompt-cache transfer streams besides each session's own: one capture or
+// restore batch leases at most this many. Gufo's default of 64 holds about
+// 0.4 GiB more GPU memory, which streamed builds lose from the expert cache.
+constexpr std::size_t kBatchTransferStreams = 16;
 
 // The RAM cache's host limit. The host keeps a fixed reserve above it, which
 // resident IQ1_M with the drafter and vision does not leave (about 4 GiB free
@@ -239,14 +243,15 @@ public:
                      std::string support_fingerprint,
                      std::shared_ptr<vision::Encoder> vision,
                      std::size_t snapshot_budget_cap,
-                     std::size_t retained_ram_bytes)
+                     std::size_t retained_ram_bytes, std::size_t sessions)
       : model_(std::move(model)),
         vision_(std::move(vision)),
         max_context_(max_context),
         use_dspark_(use_dspark),
         max_draft_tokens_(std::max(max_draft_tokens, 1u)),
         snapshot_budget_cap_(snapshot_budget_cap),
-        retained_ram_bytes_(retained_ram_bytes) {
+        retained_ram_bytes_(retained_ram_bytes),
+        sessions_(sessions) {
     const auto policy = PrefillPolicy(model_->ExactPrefill());
     if (!artifact_fingerprint.empty()) {
       if (use_dspark_ && !IsSha256Hex(support_fingerprint)) {
@@ -277,7 +282,8 @@ public:
          },
          [](std::string_view message) {
            server::Logger::Info("cache", message);
-         }});
+         },
+         kBatchTransferStreams + sessions_});
     // The host measures free memory for the RAM cache and commits its backing
     // before readiness, so the expert cache takes what is left only then.
     if (model_->StreamsExperts() && resources->commit_backing) {
@@ -988,6 +994,7 @@ private:
   std::uint32_t max_draft_tokens_;
   std::size_t snapshot_budget_cap_;
   std::size_t retained_ram_bytes_;
+  std::size_t sessions_;
   mutable std::once_flag expert_fit_;
   cache::Identity component_identity_;
 };
@@ -1148,7 +1155,7 @@ std::shared_ptr<ext::TextModelRunner> CreateDeepSeekTextRunner(
         std::move(model), max_context, use_dspark,
         options.speculative.max_draft_tokens, std::move(model_fingerprint),
         std::move(support_fingerprint), std::move(vision), ram_share,
-        retained_ram);
+        retained_ram, options.session_count);
   } catch (const std::exception& e) {
     set_error(std::string("DeepSeek V4.1 load failed: ") + e.what());
     return nullptr;
