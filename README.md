@@ -279,6 +279,8 @@ leaves about 2 GiB free.
   kernel benchmarks.
 - [CHANGELOG.md](CHANGELOG.md): changes by version.
 - [UPSTREAM.md](UPSTREAM.md): source layout and origin.
+- [AGENTS.md](AGENTS.md): build, test and measurement rules for contributors and
+  coding agents.
 
 ## License
 
