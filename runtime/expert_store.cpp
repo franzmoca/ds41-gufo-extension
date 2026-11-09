@@ -50,8 +50,10 @@ constexpr uint64_t kReserve = 4 * kGiB;
 /* Rows of the compact prefetch stage: two parity halves, so the job a layer
  * adopts and the job submitted for the layer after never share rows. A
  * whole-layer set measured 3.6 GiB; jobs touch only the predicted experts
- * (~70 at pp2048, 6 at decode) plus slack for cold caches. */
-constexpr uint32_t kPrefetchStageRows = 192;
+ * (~70 at pp2048, 6-12 at decode). A wider job keeps the experts the most
+ * predicted routes use, so 96 rows serve prefill as well as 192 did and
+ * leave ~0.9 GiB more to the expert cache (E104). */
+constexpr uint32_t kPrefetchStageRows = 96;
 /* Each slot size class grows by its own chunks, so a smaller chunk bounds
  * the capacity a class can strand in a part-used chunk. */
 constexpr uint64_t kChunkBytes = 128ull << 20;
@@ -1477,7 +1479,7 @@ void append_expert_tasks(const ds41_expert_store* store, uint32_t layer, uint32_
 
 std::shared_ptr<PrefetchJob> build_prefetch_job(
     const ds41_expert_store* store, uint32_t layer,
-    const std::array<bool, DS41_MAX_EXPERT>& wanted, bool wide) {
+    const std::array<uint32_t, DS41_MAX_EXPERT>& routed, bool wide) {
   if (!store->stage_pairs)
     return nullptr;
   auto job = std::make_shared<PrefetchJob>();
@@ -1488,6 +1490,20 @@ std::shared_ptr<PrefetchJob> build_prefetch_job(
    * beyond the half simply stay demand reads. */
   constexpr uint32_t kHalf = kPrefetchStageRows / 2;
   const uint32_t base = (layer & 1) * kHalf;
+  /* A job wider than its half keeps the experts the most predicted routes
+   * use; the kept experts still read in id order. */
+  std::array<bool, DS41_MAX_EXPERT> wanted{};
+  uint32_t n_wanted = 0;
+  for (uint32_t e = 0; e < DS41_MAX_EXPERT; ++e)
+    n_wanted += (wanted[e] = routed[e] != 0);
+  if (n_wanted > kHalf) {
+    std::array<uint16_t, DS41_MAX_EXPERT> order{};
+    for (uint32_t e = 0; e < DS41_MAX_EXPERT; ++e)
+      order[e] = (uint16_t)e;
+    std::stable_sort(order.begin(), order.end(), [&](uint16_t a, uint16_t b) { return routed[a] > routed[b]; });
+    for (uint32_t i = kHalf; i < DS41_MAX_EXPERT; ++i)
+      wanted[order[i]] = false;
+  }
   uint32_t used = 0;
   for (uint32_t e = 0; e < DS41_MAX_EXPERT && used < kHalf; ++e) {
     if (!wanted[e])
@@ -1898,12 +1914,13 @@ bool ds41_expert_store_prefetch(ds41_expert_store* store, uint32_t layer,
   // the first job also allocates the prefetch stage.
   if (layer != store->pf_expected.load(std::memory_order_acquire))
     return false;
-  std::array<bool, DS41_MAX_EXPERT> want{};
+  std::array<uint32_t, DS41_MAX_EXPERT> want{};  // predicted routes per uncached expert
   for (uint32_t i = 0; i < count; ++i) {
     const int32_t e = experts[i];
     if (e < 0 || e >= static_cast<int32_t>(store->n_expert))
       return false;
-    want[e] = store->entries[layer][e].slot == kNoSlot;
+    if (store->entries[layer][e].slot == kNoSlot)
+      ++want[e];
   }
   if (!ensure_stage_pairs(store))
     return false;

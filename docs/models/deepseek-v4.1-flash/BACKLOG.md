@@ -77,8 +77,10 @@ the decoder replay's drive-bound stall (E86). Replay data:
 - **Compact demand stage** (~3.7 → ~0.6 GiB): prefill layers with more
   misses run in passes over route subsets (E82/E84 already split resident
   and read routes), double-buffered.
-- **Prefetch stage** (~1.8 GiB, 192 rows): decode uses 6-12; measure what
-  wide prompt predictions are worth.
+- **Prefetch stage** (done, E104): 96 rows, truncated wide jobs keep the
+  most-routed experts; ~0.9 GiB to the cache. 48 rows slow a 3.5K prompt
+  on a cold cache by 5-9%. The prompt cache's 16 transfer streams (gufo
+  `feat/ext-cache-transfer-streams`) add ~0.4 GiB once merged.
 - **Swap bursts in long single-session runs** (E93): ~20M pages out around
   the 11th-15th fresh 50-64K prompt in both builds, prefill down to
   450-640 tok/s for those prompts; the server's own swap stays 9-20 MB.
