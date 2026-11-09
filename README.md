@@ -246,46 +246,35 @@ and reads only the GGUF. The
 
 ## Adapters
 
-`--adapter FILE` loads a direction adapter or a LoRA adapter; the model weights
-stay unchanged. `gufo serve llm`, `gufo prompt` and `gufo bench` accept it, with
-`--adapter-scale F` to multiply the adapter's own scale. The disk prompt cache keys
-on the file's digest and the scale.
+`--adapter FILE` applies an adapter at run time without touching the model files, and
+`--adapter-scale X` sets its strength (default 1). It loads two kinds of GGUF: direction
+adapters (per-layer vectors removed from the layer outputs) and LoRAs on
+`attn_output_b`, `ffn_down_shexp` and `ffn_down_exps`.
 
-A **direction adapter** is a small GGUF of per-layer vectors that the engine removes
-from (or adds to) what a sublayer writes into the residual streams: `attn_out`
-(attention output), `shexp_out` (shared expert output) or `ffn_out` (shared plus
-routed experts). In the default project mode each output row loses `scale (x . v) v`
-for each vector `v` in turn, so the vectors' norms carry the strength.
-[direction_adapter.hpp](direction_adapter.hpp) specifies the format, and
-`tools/ds41/direction_adapter.py` converts the published refusal files:
+Adapters tested so far:
 
-```sh
-# mako's per-layer directions (2 per layer, attention and shared expert)
-python3 tools/ds41/direction_adapter.py from-abl refusal.abl mako-refusal.gguf --arch deepseek41
-# a rank-1 abliteration LoRA: its one direction, removed exactly from the
-# attention and whole-FFN outputs of every layer (1.6 MB instead of 459 MB)
-python3 tools/ds41/direction_adapter.py from-lora \
-  DeepSeek-V4.1-Flash-1017-Abliteration-rank1-L22.gguf lora-l22.gguf \
-  --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf
-```
+| Adapter | Kind | KL vs. no adapter | Setup |
+| --- | --- | ---: | --- |
+| [skafte/mako-ablations](https://huggingface.co/skafte/mako-ablations) `deepseek-v4.1-flash-1017/refusal.abl` | directions, 2 per layer | 0.015 | convert (below) |
+| [BoldingBuilds/DeepSeek-V4.1-Flash-1017-Abliteration-LoRA-GGUF](https://huggingface.co/BoldingBuilds/DeepSeek-V4.1-Flash-1017-Abliteration-LoRA-GGUF) `...-rank1-L22.gguf` | rank-1 LoRA | 0.012 (0.011 converted) | use as is, or convert (below) |
+| [SaturnHeaven/DeepSeek-V4.1-Flash-1017-heretic-lora-GGUF](https://huggingface.co/SaturnHeaven/DeepSeek-V4.1-Flash-1017-heretic-lora-GGUF) | rank-2 LoRA | 0.018 | use as is |
 
-That LoRA stores `lora_a = -rᵀW` computed from another quantization. As a projection
-the direction is removed exactly on any build; `--model` checks the LoRA's sign
-against that build (on `IQ1_M` its `lora_a` differs from `-rᵀW` by 3.8%).
-
-A **LoRA adapter** (GGUF `adapter.type = lora`, llama.cpp's layout, F32, F16 or BF16)
-loads as it is, on the matrices that write into the residual streams:
-`attn_output_b`, `ffn_down_shexp` and `ffn_down_exps` (per-expert halves, applied by
-the route). Each adds `scale · B (A x)` with `scale = --adapter-scale · alpha / rank`;
-files with other targets are rejected. The halves stay resident in F32, also while
-experts stream. Use this for LoRAs with a different direction per layer or a rank
-above 1, which have no direction-adapter form.
-
-Without an adapter the engine is bit-identical. On `IQ1_M`, direction adapters cost
-0.5-1.3% decode and under 1% prefill; LoRA adapters cost 1.6-3.2% decode and 1.3-2.9%
-prefill, the most for the 120-matrix L22 LoRA
+KL is the mean per-token KL divergence from the model without an adapter, on resident
+`IQ1_M` over a 3K-token text
 ([E97](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e97--direction-adapters-retained),
 [E98](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e98--lora-adapters-retained)).
+
+```sh
+# mako file -> direction adapter
+python3 tools/ds41/direction_adapter.py from-abl refusal.abl mako.gguf --arch deepseek41
+# rank-1 LoRA -> 1.6 MB direction adapter (optional; the LoRA also loads as is)
+python3 tools/ds41/direction_adapter.py from-lora \
+  DeepSeek-V4.1-Flash-1017-Abliteration-rank1-L22.gguf l22.gguf --model MODEL.gguf
+
+gufo serve llm --model MODEL.gguf --adapter mako.gguf
+```
+
+Without `--adapter` the output is unchanged. With one, decode is 0.5-3% slower.
 
 ## Memory and host setup
 
