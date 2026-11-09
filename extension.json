@@ -96,6 +96,32 @@
         "deepseek41"
       ],
       "help": "With --stream-experts: streamed expert cache bytes (default: what the sessions leave)"
+    },
+    {
+      "name": "--adapter",
+      "type": "path",
+      "commands": [
+        "serve",
+        "bench",
+        "prompt"
+      ],
+      "providers": [
+        "deepseek41"
+      ],
+      "help": "Direction or LoRA adapter GGUF applied to the outputs that write into the residual streams; weights unchanged"
+    },
+    {
+      "name": "--adapter-scale",
+      "type": "number",
+      "commands": [
+        "serve",
+        "bench",
+        "prompt"
+      ],
+      "providers": [
+        "deepseek41"
+      ],
+      "help": "With --adapter: factor on the adapter's own scale (default: 1)"
     }
   ],
   "targets": {
@@ -119,6 +145,18 @@
       "role": "test"
     },
     "deepseek41flash_text_contract_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_direction_adapter_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_lora_adapter_test": {
       "requires": [
         "testing"
       ],
@@ -161,6 +199,12 @@
       "role": "test"
     },
     "deepseek41flash_mmq_typed_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_steer_test": {
       "requires": [
         "testing"
       ],

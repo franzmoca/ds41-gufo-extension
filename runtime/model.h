@@ -16,6 +16,36 @@ struct ds41_session;
 
 using ds41_session_cancel_fn = bool (*)(void* user_data);
 
+/* Direction adapter sites (direction_adapter.hpp): the attention
+ * output, the shared expert's output and the whole FFN output (shared plus
+ * routed experts), each before its hc expand into the residual streams. */
+inline constexpr const char* DS41_DIRECTION_SITES[] = {"attn_out", "shexp_out", "ffn_out"};
+enum : uint32_t { DS41_SITE_ATTN_OUT, DS41_SITE_SHEXP_OUT, DS41_SITE_FFN_OUT, DS41_N_DIRECTION_SITES };
+
+struct ds41_direction_set {
+  uint32_t layer;
+  uint32_t site;  // DS41_SITE_*
+  uint32_t count;
+  const float* vectors;  // [count][DS41_N_EMBD], copied at open
+};
+
+/* LoRA targets (lora_adapter.hpp): the matrices that write into
+ * the residual streams. */
+inline constexpr const char* DS41_LORA_TARGETS[] = {"attn_output_b", "ffn_down_shexp", "ffn_down_exps"};
+enum : uint32_t { DS41_LORA_ATTN_OUTPUT_B, DS41_LORA_FFN_DOWN_SHEXP, DS41_LORA_FFN_DOWN_EXPS, DS41_N_LORA_TARGETS };
+
+struct ds41_lora_matrix {
+  uint32_t layer;
+  uint32_t target;  // DS41_LORA_*
+  uint32_t rank;
+  uint32_t in;
+  uint32_t out;
+  uint32_t experts;  // the model's expert count for ffn_down_exps, else 0
+  float scale;       // the run-time scale times alpha / rank
+  const float* a;    // [max(experts, 1)][rank][in], copied at open
+  const float* b;    // [max(experts, 1)][out][rank]
+};
+
 struct ds41_engine_options {
   const char* model_path;
   /* Optional DSpark support model. NULL leaves speculative decoding off and
@@ -38,6 +68,17 @@ struct ds41_engine_options {
   /* Streamed expert cache bytes; 0 sizes it from available memory. Requires
    * stream_experts. */
   uint64_t expert_cache_bytes;
+  /* Direction adapter sets, at most one per (layer, site); none leaves the
+   * engine bit-identical. Project mode removes each vector's component,
+   * x -= scale (x . v) v in turn; add mode adds scale v. */
+  const ds41_direction_set* directions;
+  uint32_t n_directions;
+  float direction_scale;
+  bool direction_add;
+  /* LoRA matrices, at most one per (layer, target); none leaves the engine
+   * bit-identical. */
+  const ds41_lora_matrix* loras;
+  uint32_t n_loras;
 };
 
 inline constexpr uint32_t DS41_MIN_PREFILL_BATCH = 16;

@@ -1,10 +1,12 @@
 #ifndef GUFO_MODELS_DEEPSEEK_V41_FLASH_PROVIDER_OPTIONS_HPP_
 #define GUFO_MODELS_DEEPSEEK_V41_FLASH_PROVIDER_OPTIONS_HPP_
 
+#include <cmath>
 #include <cstdint>
 #include <gufo/ext/options.hpp>
 #include <limits>
 #include <stdexcept>
+#include <string>
 
 #include "engine.hpp"
 
@@ -34,6 +36,15 @@ inline void ApplyProviderOptions(const ext::ParsedOptions& given,
       throw std::invalid_argument("--expert-cache-bytes must be positive");
     }
     options.expert_cache_bytes = static_cast<std::uint64_t>(*bytes);
+  }
+  if (const auto* path = FindOption<std::string>(given, "--adapter")) {
+    options.adapter_path = *path;
+  }
+  if (const auto* scale = FindOption<double>(given, "--adapter-scale")) {
+    if (!std::isfinite(*scale)) {
+      throw std::invalid_argument("--adapter-scale must be finite");
+    }
+    options.adapter_scale = static_cast<float>(*scale);
   }
 }
 

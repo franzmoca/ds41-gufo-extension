@@ -7,6 +7,7 @@
 #include <stdexcept>
 #include <utility>
 
+#include "adapter.hpp"
 #include "runtime/model_data_internal.h"
 
 namespace gufo::models::deepseek_v41_flash {
@@ -31,8 +32,11 @@ std::vector<int> TakeTokens(ds41_tokens* tokens) {
 
 }  // namespace
 
-Model::Model(ds41_engine* engine, ModelOptions options)
-    : engine_(engine), options_(options) {}
+Model::Model(ds41_engine* engine, ModelOptions options,
+             std::string adapter_identity)
+    : engine_(engine),
+      options_(std::move(options)),
+      adapter_identity_(std::move(adapter_identity)) {}
 
 Model::~Model() {
   if (engine_ != nullptr) {
@@ -71,7 +75,18 @@ std::shared_ptr<Model> Model::Load(const std::string& model_path,
     return nullptr;
   }
 
+  Adapter adapter;
+  if (!options.adapter_path.empty()) {
+    std::string adapter_error;
+    if (!adapter.Load(options.adapter_path, options.adapter_scale,
+                      &adapter_error)) {
+      AssignError(error_msg, adapter_error);
+      return nullptr;
+    }
+  }
+
   ds41_engine_options engine_options{};
+  adapter.Apply(&engine_options);
   engine_options.model_path = model_path.c_str();
   engine_options.prefill_batch = options.prefill_batch;
   engine_options.exact_prefill = options.exact_prefill;
@@ -87,7 +102,7 @@ std::shared_ptr<Model> Model::Load(const std::string& model_path,
     return nullptr;
   }
 
-  return std::shared_ptr<Model>(new Model(engine, options));
+  return std::shared_ptr<Model>(new Model(engine, options, adapter.Identity()));
 }
 
 std::unique_ptr<Session> Model::CreateSession(core::SessionMode mode,

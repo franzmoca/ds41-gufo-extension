@@ -30,7 +30,7 @@ Structure follows `franzmoca/gemma4-gufo-extension`.
 | Gufo pin during the port | Fork `gemma-main` `98c4547b` (upstream plus #1046 and #1047), API 0.2.9; upstream revision once both merge | Proposed |
 | Parity baseline | `feat/ds41-coder` `123592ce` (`feat/ds41` plus the Coder) | Proposed |
 | Coder | In the first version | Agreed |
-| LoRA and direction adapters | After the first version; need only #1046 | Agreed |
+| LoRA and direction adapters | After the first version; need only #1046 | Done (E98) |
 | Expert cache and SSD streaming | One package, kept inside the extension until the extension is published; a separate library comes later | Agreed |
 | Upstream PRs | Opened only with measurements from the port | Agreed |
 | Fork after switch-over | `main` frozen with a warning that redirects to both extensions; `upstream-main` kept for upstream work | Agreed; timing open |
@@ -124,7 +124,7 @@ and adopt it later if useful.
 | `kDeepSeekV41Flash` sampling preset | Provider `sampling_defaults` |
 | `arch == "deepseek41"` shared Engram rule, `kMXFP8`, `kI64` in the GGUF reader and dequant | U2; `kI64` was not needed to open any tested set |
 | `src/cli/serve/logging.hpp` includes | Public `src/core/logging/logging.hpp` surface |
-| `src/core/direction_adapter.*`, `src/core/lora_adapter.*`, `tools/adapters/*`, `write_gguf` (`feat/ds41-experimental`) | Extension, when adapters land |
+| `src/core/direction_adapter.*`, `src/core/lora_adapter.*`, `tools/adapters/*`, `write_gguf` (`feat/ds41-experimental`) | Extension (`direction_adapter.*`, `lora_adapter.*`, `tools/ds41/direction_adapter.py`) |
 | `gufo_core`, `gufo_cache_hip` links | `gufo_ext_core`, `gufo_ext_cache`, `gufo_ext_hip`, plus `roc::hipblas`, `roc::hipblaslt` and `ROCWMMA_INCLUDE_DIR`; check `roc::hipblaslt` from outside the tree |
 | `licenses/xolotl-expert-rank.txt`, `licenses/ista-daslab-kept-experts.txt`, vendored ds4 and llama.cpp notices | Extension manifest `licenses` |
 | `tools/ci/kernel-resources.json` DS4.1 allowances | As the Gemma extension handles its kernels |
@@ -288,10 +288,11 @@ After the extension is published. Until then the store stays unchanged inside it
 4. Second consumer. Until a new model exists, a cheap proof is a test build with a
    synthetic layout at a different shape. A real model confirms it.
 
-### 7. Adapters
+### 7. Adapters (done)
 
-`--adapter`, `--adapter-scale`, core adapter loaders and tools from
-`feat/ds41-experimental`, on the extension.
+`--adapter`, `--adapter-scale`, the adapter loaders and the converter from
+`feat/ds41-experimental` are on the extension as provider options and
+extension sources; no Gufo change was needed ([E98](EXPERIMENTS.md#e98--lora-adapters-retained)).
 
 ## Open questions
 

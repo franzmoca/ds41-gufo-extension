@@ -773,7 +773,38 @@ struct Joint {
 
 /* Projections run over all n rows of d; the phases that depend on a
  * session's positions and state run per session of `joint`. */
-bool attention(ds41_decoder* d, uint32_t il, uint32_t n, const Joint* joint) {
+/* Adds layer il's LoRA term of `target` to the n rows of y: scale B (A x)
+ * over `group` x rows per y row (routed slots with their expert ids). */
+bool lora(const ds41_decoder* d, uint32_t il, uint32_t target, const void* x, bool x_half, const int32_t* ids,
+          uint32_t group, uint32_t n, float* y) {
+  const auto& s = d->engine->lora[il][target];
+  if (!s.rank) return true;
+  const uint32_t step = d->engine->lora_t_rows / group;
+  const uint64_t x_bytes = x_half ? sizeof(uint16_t) : sizeof(float);
+  for (uint32_t r0 = 0; r0 < n; r0 += step) {
+    const uint32_t m = std::min(step, n - r0);
+    const uint64_t c0 = (uint64_t)r0 * group;
+    const int32_t* row_ids = ids ? ids + c0 : nullptr;
+    if (ds41_v41_lora_down(static_cast<const uint8_t*>(x) + c0 * s.in * x_bytes, x_half ? 1 : 0, row_ids, s.a,
+                           s.rank, s.in, m * group, d->engine->lora_t) ||
+        ds41_v41_lora_up(d->engine->lora_t, row_ids, group, s.b, s.rank, s.out, s.scale, m,
+                         y + (uint64_t)r0 * s.out))
+      return false;
+  }
+  return true;
+}
+
+/* Whether attention_body leaves the output projection's input oa as FP16
+ * rows (a single batch on the matrix cores). */
+bool attention_oa_half(const ds41_decoder* d, const ds41_layer_weights* l, uint32_t n, const Joint* joint) {
+  const ds41_tensor* wo_a = l->attn_output_a;
+  const ds41_tensor* wo_b = l->attn_output_b;
+  return !joint && n >= DS41_V41_ATTN_SPLIT_TOKENS && n > d->decode_rows &&
+         dense_f16(wo_a->type, DS41_N_LORA_O, kGroupDim, n) &&
+         dense_f16(wo_b->type, (uint32_t)(wo_b->elements / wo_b->dim[0]), (uint32_t)wo_b->dim[0], n);
+}
+
+bool attention_body(ds41_decoder* d, uint32_t il, uint32_t n, const Joint* joint) {
   const ds41_layer_weights* l = &d->engine->weights->layer[il];
   const uint32_t ratio = ds41_layer_compress_ratio(il);
   const float* freq = layer_freq(d, il);
@@ -908,8 +939,7 @@ bool attention(ds41_decoder* d, uint32_t il, uint32_t n, const Joint* joint) {
   const ds41_tensor* wo_b = l->attn_output_b;
   const bool o_half = !joint && n >= DS41_V41_ATTN_SPLIT_TOKENS && n > d->decode_rows &&
                       dense_f16(wo_a->type, DS41_N_LORA_O, kGroupDim, n);
-  const bool oa_half = o_half && dense_f16(wo_b->type, (uint32_t)(wo_b->elements / wo_b->dim[0]),
-                                           (uint32_t)wo_b->dim[0], n);
+  const bool oa_half = attention_oa_half(d, l, n, joint);
   /* Speculative window rows wait for the commit; the ring keeps the rows
    * that rejected positions would overwrite. */
   CopyQueue windows;
@@ -980,6 +1010,15 @@ bool attention(ds41_decoder* d, uint32_t il, uint32_t n, const Joint* joint) {
       return false;
   }
   return linear(d, l->attn_output_b, d->oa, d->attn_out, n);
+}
+
+/* The attention sublayer's output in attn_out, with the LoRA term of its
+ * output projection. */
+bool attention(ds41_decoder* d, uint32_t il, uint32_t n, const Joint* joint) {
+  if (!attention_body(d, il, n, joint)) return false;
+  if (!d->engine->lora[il][DS41_LORA_ATTN_OUTPUT_B].rank) return true;
+  const bool oa_half = attention_oa_half(d, &d->engine->weights->layer[il], n, joint);
+  return lora(d, il, DS41_LORA_ATTN_OUTPUT_B, d->oa, oa_half, nullptr, 1, n, d->attn_out);
 }
 
 /* Batched routed projections on the FP16 matrix cores (ds41_v41_routed_f16). */
@@ -1062,7 +1101,9 @@ bool shared_moe(ds41_decoder* d, const ds41_layer_weights* l, uint32_t n, const 
              ds41_v41_swiglu(d->sg, d->su, nullptr, d->sm, n, DS41_N_FF_EXP, kSwigluLimit)) {
     return false;
   }
-  return linear(d, l->ffn_down_shexp, d->sm, d->sd, n);
+  return linear(d, l->ffn_down_shexp, d->sm, d->sd, n) &&
+         lora(d, (uint32_t)(l - d->engine->weights->layer), DS41_LORA_FFN_DOWN_SHEXP, d->sm, false, nullptr, 1, n,
+              d->sd);
 }
 
 /* Enqueues the next layer's router on this layer's FFN input (one layer
@@ -1472,7 +1513,17 @@ bool moe(ds41_decoder* d, uint32_t il, uint32_t n) {
       return false;
   }
   /* The routed rows (down6) and the shared output (sd) are summed by block()'s hc expand. */
-  return d->engine->expert_store || shared_moe(d, l, n, shared_x16);
+  if (!d->engine->expert_store && !shared_moe(d, l, n, shared_x16)) return false;
+  /* The routed experts' LoRA terms go into sd, one row per token. */
+  return lora(d, il, DS41_LORA_FFN_DOWN_EXPS, f16_down ? static_cast<const void*>(mid16) : d->mid6, f16_down,
+              d->route_ids, DS41_N_EXPERT_USED, n, d->sd);
+}
+
+/* Layer il's direction adapter edits, [0] the attention output and [1] the
+ * FFN output, or NULL when the layer has none. */
+const ds41_v41_steer* steer(const ds41_decoder* d, uint32_t il, int site) {
+  const ds41_v41_steer* s = &d->engine->steer[il][site];
+  return s->extra_k || s->total_k ? s : nullptr;
 }
 
 /* Tokens from which block() fuses the batched state passes. */
@@ -1488,6 +1539,8 @@ bool block(ds41_decoder* d, uint32_t il, int prev, int next, uint32_t n, const J
   const float eps = DS41_RMS_EPS;
   const bool entered = mixed && *mixed;
   if (mixed) *mixed = false;
+  const ds41_v41_steer* steer_attn = steer(d, il, 0);
+  const ds41_v41_steer* steer_ffn = steer(d, il, 1);
   /* Batches read each state once for its mixes and collapse (the FFN's
    * after the attention expand); the collapse uses the pre-mix that was
    * known before the mix. */
@@ -1502,17 +1555,19 @@ bool block(ds41_decoder* d, uint32_t il, int prev, int next, uint32_t n, const J
                                             kDim, eps, n) == 0) ||
         !sinkhorn(l->hc_attn_scale, l->hc_attn_base, d->pre[next], d->post, d->comb) ||
         !attention(d, il, n, joint) ||
-        ds41_v41_hc_state_pass(d->attn_out, nullptr, 0, d->post, d->comb, d->h, d->h2, d->pre[next],
-                               f32(d, l->ffn_norm), d->xn, f32(d, l->hc_ffn_fn), d->mixes, kHc, kDim, eps, n) ||
+        ds41_v41_hc_state_pass_steer(d->attn_out, nullptr, 0, d->post, d->comb, d->h, d->h2, d->pre[next],
+                                     f32(d, l->ffn_norm), d->xn, f32(d, l->hc_ffn_fn), d->mixes, kHc, kDim, eps, n,
+                                     steer_attn) ||
         !sinkhorn(l->hc_ffn_scale, l->hc_ffn_base, d->pre[prev], d->ffn_post, d->ffn_comb) || !moe(d, il, n))
       return false;
     if (!then)
-      return ds41_v41_hc_expand_sum(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2, d->ffn_post, d->ffn_comb, d->h, kHc,
+      return (!steer_ffn || ds41_v41_steer_rows(d->sd, d->down6, DS41_N_EXPERT_USED, kDim, n, steer_ffn) == 0) &&
+             ds41_v41_hc_expand_sum(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2, d->ffn_post, d->ffn_comb, d->h, kHc,
                                     kDim, n) == 0;
     /* The next layer's attention collapse uses this FFN's pre-mix. */
-    if (ds41_v41_hc_state_pass(d->sd, d->down6, DS41_N_EXPERT_USED, d->ffn_post, d->ffn_comb, d->h2, d->h,
-                               d->pre[prev], f32(d, then->attn_norm), d->xn, f32(d, then->hc_attn_fn), d->mixes, kHc,
-                               kDim, eps, n))
+    if (ds41_v41_hc_state_pass_steer(d->sd, d->down6, DS41_N_EXPERT_USED, d->ffn_post, d->ffn_comb, d->h2, d->h,
+                                     d->pre[prev], f32(d, then->attn_norm), d->xn, f32(d, then->hc_attn_fn), d->mixes,
+                                     kHc, kDim, eps, n, steer_ffn))
       return false;
     *mixed = true;
     return true;
@@ -1522,13 +1577,19 @@ bool block(ds41_decoder* d, uint32_t il, int prev, int next, uint32_t n, const J
   if (!hc_mix(d, l->hc_attn_fn, l->hc_attn_scale, l->hc_attn_base, d->h, d->pre[next], d->post, d->comb, n) ||
       ds41_v41_hc_collapse_norm(d->h, d->pre[prev], f32(d, l->attn_norm), d->xn, kHc, kDim, eps, n) ||
       !attention(d, il, n, joint) || !join_mix(d, n) ||
-      ds41_v41_hc_expand(d->attn_out, d->h, d->post, d->comb, d->h2, kHc, kDim, n))
+      (steer_attn ? ds41_v41_hc_expand_steer(nullptr, d->attn_out, 0, d->h, d->post, d->comb, d->h2, kHc, kDim, n,
+                                             steer_attn)
+                  : ds41_v41_hc_expand(d->attn_out, d->h, d->post, d->comb, d->h2, kHc, kDim, n)))
     return false;
   /* The FFN uses this layer's attention pre-mix; its own pre-mix feeds the next attention. */
   if (!hc_mix(d, l->hc_ffn_fn, l->hc_ffn_scale, l->hc_ffn_base, d->h2, d->pre[prev], d->ffn_post, d->ffn_comb, n) ||
       ds41_v41_hc_collapse_norm(d->h2, d->pre[next], f32(d, l->ffn_norm), d->xn, kHc, kDim, eps, n) ||
-      !moe(d, il, n) || !join_mix(d, n) ||
-      ds41_v41_hc_expand_sum(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2, d->ffn_post, d->ffn_comb, d->h, kHc, kDim,
+      !moe(d, il, n) || !join_mix(d, n))
+    return false;
+  if (steer_ffn)
+    return ds41_v41_hc_expand_steer(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2, d->ffn_post, d->ffn_comb, d->h, kHc,
+                                    kDim, n, steer_ffn) == 0;
+  if (ds41_v41_hc_expand_sum(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2, d->ffn_post, d->ffn_comb, d->h, kHc, kDim,
                              n))
     return false;
   return true;

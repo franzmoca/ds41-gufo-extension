@@ -239,6 +239,49 @@ At load the engine checks the file against the model; on any mismatch it logs wh
 and reads only the GGUF. The
 [streaming design](docs/models/deepseek-v4.1-flash/STREAMING.md) has the details.
 
+## Adapters
+
+`--adapter FILE` loads a direction adapter or a LoRA adapter; the model weights
+stay unchanged. `gufo serve llm`, `gufo prompt` and `gufo bench` accept it, with
+`--adapter-scale F` to multiply the adapter's own scale. The disk prompt cache keys
+on the file's digest and the scale.
+
+A **direction adapter** is a small GGUF of per-layer vectors that the engine removes
+from (or adds to) what a sublayer writes into the residual streams: `attn_out`
+(attention output), `shexp_out` (shared expert output) or `ffn_out` (shared plus
+routed experts). In the default project mode each output row loses `scale (x . v) v`
+for each vector `v` in turn, so the vectors' norms carry the strength.
+[direction_adapter.hpp](direction_adapter.hpp) specifies the format, and
+`tools/ds41/direction_adapter.py` converts the published refusal files:
+
+```sh
+# mako's per-layer directions (2 per layer, attention and shared expert)
+python3 tools/ds41/direction_adapter.py from-abl refusal.abl mako-refusal.gguf --arch deepseek41
+# a rank-1 abliteration LoRA: its one direction, removed exactly from the
+# attention and whole-FFN outputs of every layer (1.6 MB instead of 459 MB)
+python3 tools/ds41/direction_adapter.py from-lora \
+  DeepSeek-V4.1-Flash-1017-Abliteration-rank1-L22.gguf lora-l22.gguf \
+  --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf
+```
+
+That LoRA stores `lora_a = -rᵀW` computed from another quantization. As a projection
+the direction is removed exactly on any build; `--model` checks the LoRA's sign
+against that build (on `IQ1_M` its `lora_a` differs from `-rᵀW` by 3.8%).
+
+A **LoRA adapter** (GGUF `adapter.type = lora`, llama.cpp's layout, F32, F16 or BF16)
+loads as it is, on the matrices that write into the residual streams:
+`attn_output_b`, `ffn_down_shexp` and `ffn_down_exps` (per-expert halves, applied by
+the route). Each adds `scale · B (A x)` with `scale = --adapter-scale · alpha / rank`;
+files with other targets are rejected. The halves stay resident in F32, also while
+experts stream. Use this for LoRAs with a different direction per layer or a rank
+above 1, which have no direction-adapter form.
+
+Without an adapter the engine is bit-identical. On `IQ1_M`, direction adapters cost
+0.5-1.3% decode and under 1% prefill; LoRA adapters cost 1.6-3.2% decode and 1.3-2.9%
+prefill, the most for the 120-matrix L22 LoRA
+([E97](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e97--direction-adapters-retained),
+[E98](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e98--lora-adapters-retained)).
+
 ## Memory and host setup
 
 Resident `IQ1_M` at the native 1M context, one session:

@@ -79,7 +79,7 @@ std::string_view PrefillPolicy(bool exact) {
 std::vector<std::uint8_t> CompatibilityIdentity(
     std::string_view artifact_fingerprint, std::string_view support_fingerprint,
     std::uint32_t max_context, std::uint32_t max_draft_tokens,
-    std::string_view prefill_policy) {
+    std::string_view prefill_policy, std::string_view adapters) {
   if (!IsSha256Hex(artifact_fingerprint)) {
     throw std::invalid_argument(
         "DeepSeek disk cache requires an artifact fingerprint");
@@ -99,7 +99,7 @@ std::vector<std::uint8_t> CompatibilityIdentity(
            << "context_tokens=" << max_context << '\n'
            << "position_policy=absolute-v1\n"
            << "rope_window_policy=deepseek41-compiled-v1\n"
-           << "adapters=none\n"
+           << "adapters=" << adapters << '\n'
            << "prefill_policy=" << prefill_policy << '\n'
            << "support_id=" << ext::kGgufIdentityScheme << ':'
            << support_fingerprint << '\n'
@@ -261,7 +261,7 @@ public:
       component_identity_ = CompatibilityIdentity(
           artifact_fingerprint,
           use_dspark_ ? support_fingerprint : std::string{}, max_context_,
-          max_draft_tokens_, policy);
+          max_draft_tokens_, policy, model_->AdapterIdentity());
     } else {
       component_identity_ = ProcessIdentity(
           model_.get(), max_context_, use_dspark_, max_draft_tokens_, policy);

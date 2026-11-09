@@ -213,6 +213,56 @@ int ds41_v41_hc_expand(const float* y, const float* residual, const float* post,
 int ds41_v41_hc_expand_sum(const float* x, const float* extra, uint32_t rows, const float* residual, const float* post,
                            const float* comb, float* out, uint32_t hc, uint32_t dim, uint32_t n);
 
+/* Direction adapter edits of one sublayer's output y = extra + sum_r x[r]
+ * (direction_adapter.hpp): the extra vectors act on extra alone
+ * (the shared expert's site), then the total vectors on y (a whole-sublayer
+ * site). Project mode takes y -= scale (y . v) v for each vector v in turn,
+ * add mode y += scale v. Vectors are device [k][dim]; NULL or k = 0 skips. */
+typedef struct ds41_v41_steer {
+  const float* extra_v;
+  uint32_t extra_k;
+  const float* total_v;
+  uint32_t total_k;
+  float scale;
+  int add;
+  /* Project mode, device [3][DS41_V41_STEER_MAX_K][DS41_V41_STEER_MAX_K]:
+   * extra_v[a] . extra_v[j], total_v[a] . total_v[j] and
+   * extra_v[a] . total_v[j] at [which][j][a] (ds41_v41_steer_gram). */
+  const float* gram;
+} ds41_v41_steer;
+
+#define DS41_V41_STEER_MAX_K 4
+#define DS41_V41_STEER_GRAM (3 * DS41_V41_STEER_MAX_K * DS41_V41_STEER_MAX_K)
+/* Host: fills gram[DS41_V41_STEER_GRAM] for host copies of the vectors. */
+void ds41_v41_steer_gram(const float* extra_v, uint32_t extra_k, const float* total_v, uint32_t total_k,
+                         uint32_t dim, float* gram);
+/* ds41_v41_hc_expand_sum with y edited by s; at most DS41_V41_STEER_MAX_K
+ * vectors per site, and project mode needs s->gram. */
+int ds41_v41_hc_expand_steer(const float* x, const float* extra, uint32_t rows, const float* residual,
+                             const float* post, const float* comb, float* out, uint32_t hc, uint32_t dim, uint32_t n,
+                             const ds41_v41_steer* s);
+/* LoRA low-rank terms, y += scale B (A x), in two launches through t.
+ * Down: t[c, j] = sum_k a[e][j][k] x[c, k] for rows c, with e = ids[c]
+ * (ids NULL: 0; ids[c] < 0: t[c] = 0); a [experts][rank][in]; x rows are
+ * FP16 when x_half, else FP32. */
+int ds41_v41_lora_down(const void* x, int x_half, const int32_t* ids, const float* a, uint32_t rank, uint32_t in,
+                       uint32_t rows, float* t);
+/* Up: y[r, i] += scale sum_{s < group} sum_j b[e][i][j] t[r group + s, j]
+ * for rows r, e = ids[r group + s] as for down; b [experts][out][rank]. A
+ * group of routed slots so adds their terms to one token row. */
+int ds41_v41_lora_up(const float* t, const int32_t* ids, uint32_t group, const float* b, uint32_t rank, uint32_t out,
+                     float scale, uint32_t rows, float* y);
+
+/* ds41_v41_hc_state_pass (with y) whose expanded sum takes the edits of s;
+ * s NULL is the plain pass. */
+int ds41_v41_hc_state_pass_steer(const float* y, const float* x, uint32_t rows, const float* post, const float* comb,
+                                 const float* h, float* h_out, const float* pre, const float* norm_w, float* xn,
+                                 const float* fn, float* mixes, uint32_t hc, uint32_t dim, float eps, uint32_t n,
+                                 const ds41_v41_steer* s);
+/* The same edits in place: y[t] (the extra) takes every change, so a later
+ * ds41_v41_hc_expand_sum(x, y, rows, ...) or state pass sees the edited sum. */
+int ds41_v41_steer_rows(float* y, const float* x, uint32_t rows, uint32_t dim, uint32_t n, const ds41_v41_steer* s);
+
 /* Ratio-r compressor over n tokens: token t stores (kv[t], score[t]) in
  * frontier slot (pos0 + t) % r; each token that completes a group appends
  * the softmax(score)-weighted sum over the r slots to out, in order. */

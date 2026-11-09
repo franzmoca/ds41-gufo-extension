@@ -5,6 +5,17 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ## Unreleased
 
+### Features
+
+* **adapters:** `--adapter FILE` loads a direction adapter, which removes or adds
+  per-layer directions in what attention and the experts write into the
+  residual streams, or a GGUF LoRA on `attn_output_b`, `ffn_down_shexp` and
+  `ffn_down_exps`; `--adapter-scale` sets its strength. Without an adapter the
+  output is unchanged. `tools/ds41/direction_adapter.py` converts mako's `.abl`
+  files and rank-1 abliteration LoRAs
+  ([E97](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e97--direction-adapters-retained),
+  [E98](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e98--lora-adapters-retained)).
+
 ### Bug Fixes
 
 * **streaming:** the expert cache fills to its limit at startup; a server
