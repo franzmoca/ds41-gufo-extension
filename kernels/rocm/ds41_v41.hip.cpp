@@ -1342,13 +1342,49 @@ __global__ void __launch_bounds__(kSampleThreads)
   if (threadIdx.x == 0) s->result.token = sh_found != INT32_MAX ? sh_found : sh_last;
 }
 
-/* hc_expand of y = extra + sum_r x[r]. */
-__global__ void hc_expand_sum_kernel(const float* x, const float* extra, uint32_t rows, const float* residual,
-                                     const float* post, const float* comb, float* out, uint32_t hc, uint32_t dim) {
+/* y + one LoRA up term at channel i of token row r (lora_up_kernel's sum). */
+__device__ __forceinline__ float lora_up_add(float y,
+                                             const ds41_v41_lora_up_term& u,
+                                             uint64_t r, uint32_t i,
+                                             uint32_t out) {
+  float acc = 0.0f;
+  for (uint32_t s = 0; s < u.group; s++) {
+    const uint64_t c = r * u.group + s;
+    const int32_t e = u.ids ? u.ids[c] : 0;
+    if (e < 0)
+      continue;
+    const float* bi = u.b + ((uint64_t)e * out + i) * u.rank;
+    const float* tc = u.t + c * u.rank;
+    for (uint32_t j = 0; j < u.rank; j++)
+      acc += bi[j] * tc[j];
+  }
+  return y + u.scale * acc;
+}
+
+template<bool kLora>
+__device__ __forceinline__ float lora_terms_add(float y,
+                                                const ds41_v41_lora_terms& L,
+                                                uint64_t r, uint32_t i,
+                                                uint32_t out) {
+  if constexpr (kLora)
+    for (uint32_t k = 0; k < DS41_V41_LORA_TERMS; k++)
+      if (L.term[k].rank)
+        y = lora_up_add(y, L.term[k], r, i, out);
+  return y;
+}
+
+/* hc_expand of y = extra (+ LoRA terms) + sum_r x[r]. */
+template<bool kLora>
+__global__ void hc_expand_sum_kernel(const float* x, const float* extra,
+                                     uint32_t rows, const float* residual,
+                                     const float* post, const float* comb,
+                                     float* out, uint32_t hc, uint32_t dim,
+                                     ds41_v41_lora_terms L) {
   const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= dim) return;
   const uint64_t t = blockIdx.y;
-  float y = extra ? extra[t * dim + i] : 0.0f;
+  float y =
+      lora_terms_add<kLora>(extra ? extra[t * dim + i] : 0.0f, L, t, i, dim);
   for (uint32_t r = 0; r < rows; r++) y += x[(t * rows + r) * dim + i];
   const float* rt = residual + t * hc * dim;
   const float* ct = comb + t * hc * hc;
@@ -1360,16 +1396,20 @@ __global__ void hc_expand_sum_kernel(const float* x, const float* extra, uint32_
   }
 }
 
-__global__ void hc_expand_kernel(const float* y, const float* residual, const float* post, const float* comb,
-                                 float* out, uint32_t hc, uint32_t dim) {
+template<bool kLora>
+__global__ void hc_expand_kernel(const float* y, const float* residual,
+                                 const float* post, const float* comb,
+                                 float* out, uint32_t hc, uint32_t dim,
+                                 ds41_v41_lora_terms L) {
   const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= dim) return;
   const uint64_t t = blockIdx.y;
   const float* rt = residual + t * hc * dim;
   const float* ct = comb + t * hc * hc;
   float* ot = out + t * hc * dim;
+  const float yt = lora_terms_add<kLora>(y[t * dim + i], L, t, i, dim);
   for (uint32_t b = 0; b < hc; b++) {
-    float acc = post[t * hc + b] * y[t * dim + i];
+    float acc = post[t * hc + b] * yt;
     for (uint32_t a = 0; a < hc; a++) acc += ct[a * hc + b] * rt[(uint64_t)a * dim + i];
     ot[(uint64_t)b * dim + i] = acc;
   }
@@ -1583,16 +1623,8 @@ __global__ void lora_up_kernel(const float* t, const int32_t* ids, uint32_t grou
   const uint32_t i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i >= out) return;
   const uint64_t r = blockIdx.y;
-  float acc = 0.0f;
-  for (uint32_t s = 0; s < group; s++) {
-    const uint64_t c = r * group + s;
-    const int32_t e = ids ? ids[c] : 0;
-    if (e < 0) continue;
-    const float* bi = b + ((uint64_t)e * out + i) * rank;
-    const float* tc = t + c * rank;
-    for (uint32_t j = 0; j < rank; j++) acc += bi[j] * tc[j];
-  }
-  y[r * out + i] += scale * acc;
+  const ds41_v41_lora_up_term u = {t, ids, b, group, rank, scale};
+  y[r * out + i] = lora_up_add(y[r * out + i], u, r, i, out);
 }
 
 /* Thread per channel; tokens in order, since groups span the frontier. */
@@ -3448,15 +3480,46 @@ extern "C" int ds41_v41_softmax_totals(const float* logits, uint32_t n, float te
 
 extern "C" int ds41_v41_hc_expand(const float* y, const float* residual, const float* post, const float* comb,
                                   float* out, uint32_t hc, uint32_t dim, uint32_t n) {
-  hc_expand_kernel<<<dim3(blocks_for(dim), n), kThreads>>>(y, residual, post, comb, out, hc, dim);
+  hc_expand_kernel<false><<<dim3(blocks_for(dim), n), kThreads>>>(
+      y, residual, post, comb, out, hc, dim, {});
   return launch_ok("hc expand");
+}
+
+extern "C" int ds41_v41_hc_expand_lora(const float* y, const float* residual,
+                                       const float* post, const float* comb,
+                                       float* out, uint32_t hc, uint32_t dim,
+                                       uint32_t n,
+                                       const ds41_v41_lora_terms* L) {
+  if (!L)
+    return 1;
+  if (n == 0)
+    return 0;
+  hc_expand_kernel<true><<<dim3(blocks_for(dim), n), kThreads>>>(
+      y, residual, post, comb, out, hc, dim, *L);
+  return launch_ok("hc expand lora");
 }
 
 extern "C" int ds41_v41_hc_expand_sum(const float* x, const float* extra, uint32_t rows, const float* residual,
                                       const float* post, const float* comb, float* out, uint32_t hc, uint32_t dim,
                                       uint32_t n) {
-  hc_expand_sum_kernel<<<dim3(blocks_for(dim), n), kThreads>>>(x, extra, rows, residual, post, comb, out, hc, dim);
+  hc_expand_sum_kernel<false><<<dim3(blocks_for(dim), n), kThreads>>>(
+      x, extra, rows, residual, post, comb, out, hc, dim, {});
   return launch_ok("hc expand sum");
+}
+
+extern "C" int ds41_v41_hc_expand_sum_lora(const float* x, const float* extra,
+                                           uint32_t rows, const float* residual,
+                                           const float* post, const float* comb,
+                                           float* out, uint32_t hc,
+                                           uint32_t dim, uint32_t n,
+                                           const ds41_v41_lora_terms* L) {
+  if (!L)
+    return 1;
+  if (n == 0)
+    return 0;
+  hc_expand_sum_kernel<true><<<dim3(blocks_for(dim), n), kThreads>>>(
+      x, extra, rows, residual, post, comb, out, hc, dim, *L);
+  return launch_ok("hc expand sum lora");
 }
 
 extern "C" int ds41_v41_hc_expand_steer(const float* x, const float* extra, uint32_t rows, const float* residual,

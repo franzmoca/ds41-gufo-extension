@@ -252,6 +252,31 @@ int ds41_v41_lora_down(const void* x, int x_half, const int32_t* ids, const floa
  * group of routed slots so adds their terms to one token row. */
 int ds41_v41_lora_up(const float* t, const int32_t* ids, uint32_t group, const float* b, uint32_t rank, uint32_t out,
                      float scale, uint32_t rows, float* y);
+/* Up terms deferred to the expand that consumes y (one launch fewer per
+ * matrix): each term is the lora_up arguments of one matrix, added in order
+ * exactly as the separate launches would. Terms with rank 0 are skipped. */
+#define DS41_V41_LORA_TERMS 2
+typedef struct ds41_v41_lora_up_term {
+  const float* t;
+  const int32_t* ids;
+  const float* b;
+  uint32_t group, rank;
+  float scale;
+} ds41_v41_lora_up_term;
+typedef struct ds41_v41_lora_terms {
+  ds41_v41_lora_up_term term[DS41_V41_LORA_TERMS];
+} ds41_v41_lora_terms;
+/* ds41_v41_hc_expand with y + the terms of L (y itself is not written). */
+int ds41_v41_hc_expand_lora(const float* y, const float* residual,
+                            const float* post, const float* comb, float* out,
+                            uint32_t hc, uint32_t dim, uint32_t n,
+                            const ds41_v41_lora_terms* L);
+/* ds41_v41_hc_expand_sum with extra + the terms of L (extra is not written). */
+int ds41_v41_hc_expand_sum_lora(const float* x, const float* extra,
+                                uint32_t rows, const float* residual,
+                                const float* post, const float* comb,
+                                float* out, uint32_t hc, uint32_t dim,
+                                uint32_t n, const ds41_v41_lora_terms* L);
 
 /* ds41_v41_hc_state_pass (with y) whose expanded sum takes the edits of s;
  * s NULL is the plain pass. */

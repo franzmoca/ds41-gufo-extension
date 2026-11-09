@@ -137,9 +137,13 @@ bool dequant_row(uint32_t type, const uint8_t* src, float* out, uint32_t n) {
       }
       return v;
     }();
+    /* An E4M3 value has at most four significant bits, so its product with
+     * the block's power of two is exact in double and the one rounding to
+     * float gives ldexpf's result, at a tenth of ldexpf's cost per value. */
     for (uint32_t b = 0; b < n / 32; b++, src += 33) {
-      const int e = (int)src[0] - 127;
-      for (int i = 0; i < 32; i++) out[b * 32 + i] = ldexpf(kValues[src[1 + i]], e);
+      const double scale = std::ldexp(1.0, (int)src[0] - 127);
+      for (int i = 0; i < 32; i++)
+        out[b * 32 + i] = (float)(kValues[src[1 + i]] * scale);
     }
     return true;
   }
@@ -403,6 +407,13 @@ struct ds41_decoder : Activations {
    * arithmetic of a single-token evaluation; up to
    * DS41_V41_GEMV_MAX_TOKENS for joint evaluations of independent rows. */
   uint32_t decode_rows = kDecodeRows;
+  /* While block() runs a decode-sized batch, lora() leaves the up terms to
+   * the expand that consumes the sublayer output: [0] attention, [1] FFN
+   * (the shared expert's term, then the routed one). lora_t_used counts the
+   * rows of engine->lora_t they hold. */
+  bool lora_defer = false;
+  ds41_v41_lora_terms lora_up[2] = {};
+  uint64_t lora_t_used = 0;
   std::vector<int64_t> engram_history;
   /* Tokens of the prompt batch after the next evaluation (ds41_decoder_set_lookahead). */
   std::vector<int> lookahead;
@@ -775,12 +786,26 @@ struct Joint {
  * session's positions and state run per session of `joint`. */
 /* Adds layer il's LoRA term of `target` to the n rows of y: scale B (A x)
  * over `group` x rows per y row (routed slots with their expert ids). */
-bool lora(const ds41_decoder* d, uint32_t il, uint32_t target, const void* x, bool x_half, const int32_t* ids,
-          uint32_t group, uint32_t n, float* y) {
+bool lora(ds41_decoder* d, uint32_t il, uint32_t target, const void* x,
+          bool x_half, const int32_t* ids, uint32_t group, uint32_t n,
+          float* y) {
   const auto& s = d->engine->lora[il][target];
-  if (!s.rank) return true;
-  const uint32_t step = d->engine->lora_t_rows / group;
+  if (!s.rank)
+    return true;
   const uint64_t x_bytes = x_half ? sizeof(uint16_t) : sizeof(float);
+  if (d->lora_defer) {
+    /* block() checked that every term of the layer fits in lora_t. */
+    float* t = d->engine->lora_t + d->lora_t_used * d->engine->lora_max_rank;
+    d->lora_t_used += (uint64_t)n * group;
+    ds41_v41_lora_up_term& u =
+        target == DS41_LORA_ATTN_OUTPUT_B    ? d->lora_up[0].term[0]
+        : target == DS41_LORA_FFN_DOWN_SHEXP ? d->lora_up[1].term[0]
+                                             : d->lora_up[1].term[1];
+    u = {t, ids, s.b, group, s.rank, s.scale};
+    return ds41_v41_lora_down(x, x_half ? 1 : 0, ids, s.a, s.rank, s.in,
+                              n * group, t) == 0;
+  }
+  const uint32_t step = d->engine->lora_t_rows / group;
   for (uint32_t r0 = 0; r0 < n; r0 += step) {
     const uint32_t m = std::min(step, n - r0);
     const uint64_t c0 = (uint64_t)r0 * group;
@@ -1573,13 +1598,32 @@ bool block(ds41_decoder* d, uint32_t il, int prev, int next, uint32_t n, const J
     return true;
   }
   if (entered) return false;
+  /* LoRA up terms join the expands (lora()); each layer's terms take at
+   * most 1 + 1 + DS41_N_EXPERT_USED rows of lora_t per token. */
+  const bool defer =
+      d->engine->lora_t && !steer_attn && !steer_ffn &&
+      (uint64_t)n * (2 + DS41_N_EXPERT_USED) <= d->engine->lora_t_rows;
+  d->lora_defer = defer;
+  d->lora_up[0] = d->lora_up[1] = {};
+  d->lora_t_used = 0;
+  struct Undefer {
+    ds41_decoder* d;
+    ~Undefer() { d->lora_defer = false; }
+  } undefer{d};
   /* Attention uses the pre-mix of the previous FFN (shifted mHC). */
-  if (!hc_mix(d, l->hc_attn_fn, l->hc_attn_scale, l->hc_attn_base, d->h, d->pre[next], d->post, d->comb, n) ||
-      ds41_v41_hc_collapse_norm(d->h, d->pre[prev], f32(d, l->attn_norm), d->xn, kHc, kDim, eps, n) ||
+  if (!hc_mix(d, l->hc_attn_fn, l->hc_attn_scale, l->hc_attn_base, d->h,
+              d->pre[next], d->post, d->comb, n) ||
+      ds41_v41_hc_collapse_norm(d->h, d->pre[prev], f32(d, l->attn_norm), d->xn,
+                                kHc, kDim, eps, n) ||
       !attention(d, il, n, joint) || !join_mix(d, n) ||
-      (steer_attn ? ds41_v41_hc_expand_steer(nullptr, d->attn_out, 0, d->h, d->post, d->comb, d->h2, kHc, kDim, n,
-                                             steer_attn)
-                  : ds41_v41_hc_expand(d->attn_out, d->h, d->post, d->comb, d->h2, kHc, kDim, n)))
+      (steer_attn
+           ? ds41_v41_hc_expand_steer(nullptr, d->attn_out, 0, d->h, d->post,
+                                      d->comb, d->h2, kHc, kDim, n, steer_attn)
+       : d->lora_up[0].term[0].rank
+           ? ds41_v41_hc_expand_lora(d->attn_out, d->h, d->post, d->comb, d->h2,
+                                     kHc, kDim, n, &d->lora_up[0])
+           : ds41_v41_hc_expand(d->attn_out, d->h, d->post, d->comb, d->h2, kHc,
+                                kDim, n)))
     return false;
   /* The FFN uses this layer's attention pre-mix; its own pre-mix feeds the next attention. */
   if (!hc_mix(d, l->hc_ffn_fn, l->hc_ffn_scale, l->hc_ffn_base, d->h2, d->pre[prev], d->ffn_post, d->ffn_comb, n) ||
@@ -1589,10 +1633,13 @@ bool block(ds41_decoder* d, uint32_t il, int prev, int next, uint32_t n, const J
   if (steer_ffn)
     return ds41_v41_hc_expand_steer(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2, d->ffn_post, d->ffn_comb, d->h, kHc,
                                     kDim, n, steer_ffn) == 0;
-  if (ds41_v41_hc_expand_sum(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2, d->ffn_post, d->ffn_comb, d->h, kHc, kDim,
-                             n))
-    return false;
-  return true;
+  if (d->lora_up[1].term[0].rank || d->lora_up[1].term[1].rank)
+    return ds41_v41_hc_expand_sum_lora(d->down6, d->sd, DS41_N_EXPERT_USED,
+                                       d->h2, d->ffn_post, d->ffn_comb, d->h,
+                                       kHc, kDim, n, &d->lora_up[1]) == 0;
+  return ds41_v41_hc_expand_sum(d->down6, d->sd, DS41_N_EXPERT_USED, d->h2,
+                                d->ffn_post, d->ffn_comb, d->h, kHc, kDim,
+                                n) == 0;
 }
 
 /* Layer il + 1 for block()'s fused close when it runs next on the same rows
