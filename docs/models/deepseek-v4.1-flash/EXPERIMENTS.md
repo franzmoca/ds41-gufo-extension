@@ -137,6 +137,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E101](#e101--untraced-cost-of-a-dependent-decode-launch-measured) | decode pipeline | measured | Empty dependent launches added per layer: 1.2-1.9 µs each untraced; a step's ~986 launches cost 2-3.4%, one fusion ~0.1%. |
 | [E102](#e102--dspark-attention-one-block-per-head-retained) | DSpark/speculation | retained | Drafter pass bandwidth table; DSpark attention reads the shared keys once per head (162 → 41 µs isolated): sampled long +0.9% on identical drafts, greedy unchanged within noise, outputs identical. |
 | [E103](#e103--drafter-q4_k-projections-through-the-split-gemv-retained) | DSpark/speculation | retained | The drafter's multi-row Q4_K projections use the split GEMV (bit-exact): a stage's six projections at 6 rows ~514 → ~415 µs; sampled cycles −0.2 to −0.5%, identical outputs and drafts. |
+| [E104](#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained) | streaming | retained | Prefetch stage 192 → 96 rows, truncated wide jobs keep the most-routed experts; with 16 cache transfer streams the expert cache gains 1.0-1.5 GiB: prefill −0.1 to −2.6% (12K reuse −5.8% incl. one slow base run), greedy code −2.3% per cycle, outputs unchanged. 48 rows slowed a 3.5K prompt after a chat by 5-9%. |
 
 ## Milestones
 
@@ -3787,6 +3788,58 @@ compare directly: −0.5%, −0.2% and −0.4% sampled. Greedy chat follows the
 policy's spread (E99). The bench's best slices differ from the drafter's
 rule for `q_b` (2), the shared expert's gate (8) and down (8), ~12 µs per
 stage, below this A/B's resolution; not changed.
+
+## E104 — a 96-row prefetch stage that keeps the most-routed experts (retained)
+
+BACKLOG item 30: the prefetch stage held 192 expert rows (~1.8 GiB on
+`UD-IQ2_XXS`) in two parity halves; decode jobs use 6-12 rows, prefill's
+wide jobs ~70, and a job wider than a half kept the lowest expert ids. The
+server sizes the expert cache from the memory left after the stage, so a
+smaller stage is cache. Two changes, with the prompt cache's transfer
+streams cut from 64 to 16 (gufo `feat/ext-cache-transfer-streams`, ~9 MiB
+each) in the candidate arms:
+
+- **Heaviest first:** a job wider than its half keeps the experts with the
+  most predicted routes (ties by id), still read in id order.
+- **Smaller stage:** 48 and 96 rows.
+
+Streamed `UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision; one build, arms by
+environment; the `prefill` workload (warm, 2K, 15K, 20K, 24K, repeat,
+continuation, half reuse) and `decode0` (greedy chat, code after a
+3,477-token prompt, long after 23,974).
+
+**48 rows** (order base, 48, 48 + heaviest, 48 + heaviest + 16 streams, then
+reversed): expert cache 95.7-95.9 → 97.1-97.9 GiB, prefill reads 6.2 →
+4.9-5.5 GB. Without heaviest-first the 15K prompt was 2.6% slower; with it
+long prompts were 2-3.5% faster. The 3,477-token code prompt after a chat
+reply, whose experts are not cached, took 5.92 → 6.24-6.48 s (+5-9%) in
+all six candidate runs: it needs the wide rows. One 16-stream run spent
+317 s on the 512-token chat reply (4.4 s per token waiting on the router's
+routes for 66 tokens), the following request ran normally; not repeated in
+any other run.
+
+**96 rows + heaviest + 16 streams** (order base, new, new, base, base, new;
+mean of three, ms):
+
+| Request | Base | New | Change |
+| --- | ---: | ---: | ---: |
+| prefill 2K | 2750 | 2706 | −1.6% |
+| prefill 15K | 14283 | 13975 | −2.2% |
+| prefill 20K | 18717 | 18689 | −0.1% |
+| prefill 24K | 21638 | 21511 | −0.6% |
+| prefill 12K, half reused | 3133 | 2952 | −5.8% (base 3028, 3342, 3028) |
+| code prompt after a chat | 5945 | 5910 | −0.6% |
+| long prompt after code | 22949 | 22761 | −0.8% |
+| greedy code, ms per cycle | 94.0 | 91.9 | −2.3% (every new run below every base run) |
+| greedy long, ms per cycle | 95.6 | 94.9 | −0.7% |
+
+The expert cache reaches 96.9-97.4 GiB against 95.4-96.0, decode reads
+11.3 → 10.6 MiB per token; read wait per token is unchanged (2.83-2.86 ms),
+so most of the reads saved were already hidden. Greedy chat follows the
+policy's spread (E99). Outputs are identical. The stage is 96 rows by
+default; the 16 transfer streams need the gufo change. The 96-row stage
+was not measured without them; 16 streams alone gave the cache ~0.5 GiB
+earlier, with decode within noise.
 
 ## Backlog measurements without an E-number
 

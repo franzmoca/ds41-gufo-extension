@@ -304,28 +304,35 @@ int main() {
         "dropped bytes never counted as consumed");
   ds41_expert_store_destroy(store);
   // A prefill-scale (wide) prefetch stages a large expert set that a
-  // batch-scale prepare adopts without rereading; a small batch drops it.
+  // batch-scale prepare adopts without rereading; a small batch drops it. A
+  // set wider than the stage half keeps the experts with the most predicted
+  // routes: 100-147 twice, the rest once, and the batch routes 100-107.
   store = ds41_expert_store_create(&f.model, &f.weights, 4 * kSlot);
   {
     std::vector<int32_t> all(DS41_MAX_EXPERT);
     for (uint32_t e = 0; e < DS41_MAX_EXPERT; ++e)
       all[e] = static_cast<int32_t>(e);
+    std::vector<int32_t> heavy = all;
+    for (int32_t e = 100; e < 148; ++e)
+      heavy.push_back(e);
     std::vector<int32_t> scan(1024 * 6);
     for (uint32_t i = 0; i < scan.size(); ++i)
-      scan[i] = static_cast<int32_t>(i % 8);
+      scan[i] = static_cast<int32_t>(100 + i % 8);
     check(store && run(0, scan), "wide source layer stage bytes");
-    check(ds41_expert_store_prefetch(store, 1, all.data(), DS41_MAX_EXPERT,
+    check(ds41_expert_store_prefetch(store, 1, heavy.data(),
+                                     static_cast<uint32_t>(heavy.size()),
                                      true) &&
               idle(store),
           "wide prefetch submits and drains");
     stats = ds41_expert_store_get_stats(store);
     const uint64_t demand_only = stats.bytes_read;
-    constexpr uint32_t kHalf = 96;  // one parity half of the compact stage
+    constexpr uint32_t kHalf = 48;  // one parity half of the compact stage
     check(run(1, scan), "wide adoption stage bytes");
     stats = ds41_expert_store_get_stats(store);
     check(stats.bytes_read - demand_only == kHalf * kSlot &&
               stats.prefetch_bytes == kHalf * kSlot,
-          "batch-scale prepare adopts the truncated wide prefetch");
+          "batch-scale prepare adopts the most-routed experts of a truncated "
+          "wide prefetch");
     check(run(2, scan), "wide drop source layer stage bytes");
     check(ds41_expert_store_prefetch(store, 3, all.data(), DS41_MAX_EXPERT,
                                      true) &&

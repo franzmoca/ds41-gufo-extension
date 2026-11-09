@@ -115,11 +115,12 @@ its pinned mirror is rewritten.
 - **Demand stage.** A whole-layer buffer indexed by expert. One buffer
   suffices: the routes copy orders a layer's demand reads behind the
   previous layer's compute.
-- **Prefetch stage.** A compact 192-row buffer in two 96-row parity halves,
+- **Prefetch stage.** A compact 96-row buffer in two 48-row parity halves,
   allocated when prefetch first runs, so it never shrinks the seed. A job's
   experts take rows in its layer's half, addressed with the allocation
-  stride (the stride of the largest expert). A job beyond 96 experts
-  truncates; the excess stays a demand read. A job starts only while its
+  stride (the stride of the largest expert). A job beyond 48 experts keeps
+  the experts the most predicted routes use (E104); the excess stays a
+  demand read. A job starts only while its
   layer is the next one to prepare, checked under the read pool's lock: an
   overtaken job's half may hold the rows of the layer in compute.
 

@@ -7,6 +7,11 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ### Performance
 
+* **streaming:** the prefetch stage holds 96 instead of 192 experts and keeps
+  the experts most tokens route to when a prompt predicts more, leaving
+  ~0.9 GiB more to the expert cache, with identical outputs
+  ([E104](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained)).
+
 * **dspark:** greedy decoding resumes drafting as soon as a probe shows that it
   pays, and every request starts with a fresh draft policy. Greedy chat decodes
   4-7% faster and code up to 7.5% faster on streamed builds, with identical
