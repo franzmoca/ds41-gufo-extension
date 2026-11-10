@@ -1,0 +1,3 @@
+collapse only     n 2048:   1.313 ms  read 167.8 MB write  41.9 MB   159.7 GB/s  hash becd71b1c26c2052
+attention expand  n 2048:   2.247 ms  read 209.7 MB write 209.7 MB   186.7 GB/s  hash dc659e01f633fd59
+ffn expand        n 2048:   3.644 ms  read 461.4 MB write 209.7 MB   184.2 GB/s  hash c7c15dfa75c6d70f

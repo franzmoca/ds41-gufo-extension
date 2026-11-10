@@ -39,6 +39,13 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   abliteration LoRA, decode is 0.4% faster with identical outputs
   ([E106](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e106--lora-up-terms-in-the-hc-expand-retained)).
 
+* **prefill:** `attn_q_b` and the Engram projection run in chunks that stay
+  in the GPU's 32 MiB cache, and the BF16 router, compressor and indexer
+  kernels build their matrix-core operands with fewer LDS reads; fresh
+  20-24K-token prompts are 1.6-2.1% faster with identical outputs
+  ([E108](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e108--dense-fp16-prefill-workgroups-in-cache-sized-chunks-retained),
+  [E109](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e109--bf16-matmul-operands-without-rocwmma-weights-not-staged-in-lds-retained)).
+
 * **engram:** MXFP8 Engram rows decode about 9× faster on the host, with
   identical values; MXFP8 reads cost the same as IQ4_NL
   ([E107](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e107--mxfp8-engram-cost-and-host-dequantization-retained)).

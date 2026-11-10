@@ -303,6 +303,16 @@ against an uncached prompt.
   ~8.6 GiB; the cache is fitted only after they exist (E93). `-c 4096`
   starts reliably.
 
+### 42. 4,096-token prefill batches for streamed builds
+
+`--prefill-batch 4096` is 5-8.5% faster on fresh 15-24K-token served
+prompts (E112), but its sessions take ~0.55 GiB more and the prompt cache's
+backing is then refused at load (`device_heap_reserve`), so repeated and
+continued prompts run in full. Next: have the load seed leave the room a
+larger batch needs (`kReserve` in `runtime/expert_store.cpp` is sized for
+2,048), then measure fresh, repeated and continued prompts and decode
+misses with the ~0.55 GiB smaller expert cache before changing the default.
+
 ### 33. Attention partials written back during the dense GEMVs
 
 Split attention writes 2.64 MB of partials per row and layer; their
@@ -433,6 +443,7 @@ in EXPERIMENTS.md.
 | Top-p softmax totals on the device (DECODE.md lever 4) | Sampled DSpark +0.3 to +1.1 tok/s, AR sampled +0.1 to +0.2 | E88 |
 | Eviction victim lists, exact pops (item 31) | Scan removed; served speed unchanged (scan ≤ ~0.15 ms per admission) | E91, E92 |
 | Eviction by frequency class (item 31) | Agent replay −0.9% total, −6% reads; code prompt after a chat −10%; cold 2K/15K +1-2% | E105 |
+| Dense FP16 workgroups in cache-sized chunks; BF16 operands without rocWMMA | `attn_q_b` 5.54 → 4.56 ms, router 1.15 → 0.90 ms; fresh 20-24K prompts −1.6 to −2.1% | E108, E109 |
 | Two-wave prefill, gate+up then down | pp2048 1,109 → 1,160 tok/s; served −1.7 s / −1.2 s, then −1.2% | E82, E84 |
 | Layer-0 prediction, Engram rows in layer order | Encoder read idle 1.53 → 0.96 s over two documents | E83 |
 | Engram lookahead | Engram waits 1.21 → 0.50 s; −2.1% on a 58K prompt | E85 |

@@ -78,6 +78,8 @@ order with the build (E83).
 |---|---:|---|
 | FP16/BF16 WMMA | 55.4 TFLOP/s | `tools/bench/gfx1151_peak.hip` |
 | DRAM read | 240 GB/s | same |
+| Reread of up to 32 MiB (last-level cache) | 750-920 GB/s | `tools/bench/ds41_read_ramp.hip` (E108) |
+| LDS read | 6,280 GB/s: a 16-byte read costs ~30 vector instructions, a matrix-core product ~60 | `gfx1151_peak.hip` (E109) |
 | Expert reads from two NVMe drives | ~10.4 GB/s (0.38 ms + 0.10 ms/MiB fitted) | `tools/ds41/prefetch_sim.py` read-cost fit on the served traces |
 
 ## Served budget: one 19,927-token fresh prompt
@@ -243,22 +245,29 @@ unconfirmed): [BACKLOG item 6](BACKLOG.md#6-routed-fp16-kernel-weight-decode).
 
 ### 4. Dense FP16 projections (~3.8 s, ~18%)
 
-`kernels/rocm/ds41_dense_f16.hip.cpp`; `attn_q_b` (27.8 TFLOP/s) and
-`attn_output_a` (28.7) are the weakest. `attn_q_b` takes 5.61 ms in
-`ds41_mmq_bench --dense` against 6.19 ms served; four rotated weight copies
-change nothing (5.60 vs 5.62 ms, `tools/bench/ds41_qb_rotate.hip`), so the
-gap is contention with expert streaming and outlier layers (E68's 41 ms
-layer 7). E23, E52 and E53 exhausted the tile and load knobs; no open
-item. Tools: `ds41_mmq_bench --dense [--x-half 1]`,
-`tools/bench/ds41_dense_f16_tune.hip`.
+`kernels/rocm/ds41_dense_f16.hip.cpp`. A product costs about 60 vector
+instructions of issue, and the kernel spends 128 products against ~1.5-2.1k
+vector instructions per 256-value step, so its instruction mix allows
+about 44 of the 55 TFLOP/s; the shapes run at 30-38. `attn_q_b` was the
+exception, bound by DRAM: its 44.6 MB do not fit the 32 MiB cache and a
+batch swept them 16 times. Since E108 it runs in cache-sized row chunks
+(5.54 → 4.56 ms in the bench, 36 TFLOP/s), as does the Engram projection
+(21.2 → 18.6 ms); `attn_output_b` and the shared expert were slower in
+every chunking. E23, E52 and E53 exhausted the tile and load knobs; no open
+item. Tools: `tools/bench/ds41_dense_f16_cache.hip` (workgroup orders, bit
+checks), `tools/bench/ds41_dense_f16_tune.hip`.
 
-### 5. BF16 router (0.57 s, ~2.8%, before E75)
+### 5. BF16 router (0.57 s, ~2.8%, before E75 and E109)
 
-`matmul_bf16_wmma_kernel<128>` on 384 rows launches only 96 workgroups for
-2,048 tokens (5.1 TFLOP/s per pass), twice per encoder layer (routing and
-prediction). E75's narrow kernel takes 1.27 → 1.16 ms per call warm, about
-0.05 s per 20K prompt, not yet reprofiled served; 64-row wide tiles were
-slower (E74). Split K: [BACKLOG item 7](BACKLOG.md#7-remaining-prefill-glue).
+Three products per weight fragment (hi, mid and lo terms of the FP32
+activations) at 7-8 TFLOP/s per pass. E75's narrow kernel took 1.27 → 1.16
+ms per call; E109 builds the operands with one LDS read and four lane
+exchanges instead of rocWMMA's loads and keeps the weights out of LDS:
+router 1.15 → 0.90 ms, compressor 1.42 → 1.08, indexer `q_b` 2.62 → 2.10,
+bit-identical. Still 27 issued TFLOP/s: six operand reads per K16 step
+remain. 64-row wide tiles and the other narrow tile shapes were slower
+(E74, E109). Split K:
+[BACKLOG item 7](BACKLOG.md#7-remaining-prefill-glue).
 
 ### 6. Attention (1.64 s, ~8%)
 
@@ -270,9 +279,10 @@ retained, E53 found no fixed cost, E19/E20 sped up the indexer. FP16 Q:
 ### 7. Hyper-connection state passes (1.09 s, ~5%)
 
 `hc_state_pass_kernel` reads the 4 × 5,120 FP32 state once per token, with
-the FFN's closing expand fused in (E22), near the DRAM limit. Only fewer
-passes or a smaller state type, which changes numerics, remain; no open
-item.
+the FFN's closing expand fused in (E22): 184-187 GB/s of reads and writes
+against a ~209 GB/s copy ceiling, of which the 24 mix dots cost 0.2-0.35 ms
+per call (E111). Only fewer passes or a smaller state type, which changes
+numerics, remain; no open item.
 
 ### 8. Engram row reads (0.37 s, ~1.8%, before E83/E85)
 

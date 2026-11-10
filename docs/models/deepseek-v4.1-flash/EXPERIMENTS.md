@@ -141,6 +141,11 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E105](#e105--eviction-by-frequency-class-retained) | expert cache | retained | ClassLRU-style eviction (llama.cpp #31233): use counts decaying over 2,048 tokens, victim max age / 2^class, seeded experts at half weight. Fixed-conversation agent replay −0.9% total, −6% reads; code prompt after a chat −10%; cold 2K/15K prompts +1-2%; outputs unchanged. |
 | [E106](#e106--lora-up-terms-in-the-hc-expand-retained) | features | retained | Decode-sized batches add the LoRA up terms inside the hc expand that reads the sublayer output (one launch fewer per matrix, bit-identical): L22 LoRA AR decode −0.4% in every arm, identical replies; heretic within noise. |
 | [E107](#e107--mxfp8-engram-cost-and-host-dequantization-retained) | streaming/reads | retained | MXFP8 rows dequantize with one power of two per block instead of `ldexpf` per value (bit-identical, 9× faster per row). Reads and per-step cost match IQ4_NL (profiled); the served DSpark gap (4-12%) is the drafts on different text, not the table. Prefill IQ4_NL ~1% faster, unbalanced. |
+| [E108](#e108--dense-fp16-prefill-workgroups-in-cache-sized-chunks-retained) | prefill kernels | retained | The device's 32 MiB last-level cache reads at ~900 GB/s against ~239 from DRAM; `attn_q_b` and the Engram projection sweep their weights in chunks that stay cached (bit-identical): `attn_q_b` 5.54 → 4.56 ms, Engram projection 21.1 → 18.6 ms; fresh 15-24K prompts −1.1 to −1.8%. |
+| [E109](#e109--bf16-matmul-operands-without-rocwmma-weights-not-staged-in-lds-retained) | prefill kernels | retained | BF16 matmul operands built with one LDS read and four lane exchanges, router and compressor weights loaded straight into the operand registers (bit-identical): router 1.15 → 0.90 ms, compressor 1.42 → 1.08, indexer `q_b` 2.62 → 2.10; with E108, fresh 20-24K prompts −1.6 to −2.1%. |
+| [E110](#e110--decode-gemv-workgroups-striding-over-row-tiles-rejected) | decode kernels | rejected | Dense decode GEMV with a fixed grid of workgroups striding over the row tiles: bit-identical, 219-228 GB/s in every grid, as before. A plain read loses 4-9 GB/s to the GEMV's access pattern at decode sizes, not to workgroup turnover. |
+| [E111](#e111--hyper-connection-state-pass-against-the-copy-ceiling-measured) | prefill kernels | measured | The batched state pass moves 184-187 GB/s of reads and writes against a ~209 GB/s copy ceiling; its 24 mix dots cost 0.2-0.35 ms of 2.3-3.6 ms. Left unchanged. |
+| [E112](#e112--4096-token-prefill-batches-on-served-streamed-text-measured) | prefill pipeline | measured | `--prefill-batch 4096` on streamed `UD-IQ2_XXS`: fresh 15-24K prompts −5 to −8.5%, but the prompt cache's backing is refused at load and repeated prompts run again in full. |
 
 ## Milestones
 
@@ -4045,6 +4050,181 @@ earlier layers since E85). IQ4_NL ran ~1% faster, but its two runs came last
 and in a row, so that difference is unbalanced and inconclusive. Item 14 is
 closed: MXFP8 costs no measurable read or step time; its served speed with
 DSpark follows the drafts on the text it produces.
+
+## E108 — dense FP16 prefill: workgroups in cache-sized chunks (retained)
+
+`tools/bench/ds41_read_ramp.hip` rereads one buffer of growing size: up to
+32 MiB the device answers from its last-level cache at 750-920 GB/s (about
+2 TB/s below 2 MiB in a longer kernel), above it from DRAM at 235-239 GB/s.
+`dense_f16_kernel` takes 256 weight rows and 128 tokens per workgroup, row
+blocks fastest, so a 2,048-token batch sweeps the whole matrix 16 times.
+`attn_q_b` (44.6 MB in Q8_0, 34.4 MB in Q6_K) does not fit the cache, so
+every sweep came from DRAM, 713 MB per call beside the 268 MB of FP32
+output it writes.
+
+The kernel now derives its row block and token tile from one workgroup
+index, in the order "chunks of T token tiles, inside each chunks of R row
+blocks" (`dense_chunks`). Each output keeps its products and sums; only the
+order of the workgroups changes, and the bench checks that every order
+gives the same bits. Per call at 2,048 tokens, DRAM-cold weights
+(`tools/bench/ds41_dense_f16_cache.hip`,
+[Q8_0](artifacts/2026-11-10-prefill-kernels/dense-order-q8.txt),
+[Q6_K](artifacts/2026-11-10-prefill-kernels/dense-order-q6k.txt)):
+
+| Shape | One sweep per tile | Best chunking | Retained order |
+| --- | ---: | ---: | --- |
+| `attn_q_b` Q8_0, 32,768 × 1,280 | 5.54 ms | 4.53-4.60 ms | 15 row blocks (5 MiB), all tiles: 4.56 ms |
+| `attn_q_b` Q6_K | 5.76 ms | 5.07 ms | 19 row blocks, all tiles: 5.05 ms |
+| Engram projection Q6_K, 25,600 × 6,144 (129 MB) | 21.2 ms | 18.6 ms | 4 row blocks, 4 tiles: 18.6 ms |
+| `attn_q_a` + `attn_kv` Q8_0 (9.7 MB) | 1.07 ms | 1.01 ms | unchanged (fits the cache) |
+| `attn_output_b` Q8_0, 5,120 × 8,192 | 4.48 ms | none faster (4.52-6.08 ms) | unchanged |
+| Shared gate + up Q8_0, FP32 input | 3.33 ms | none faster | unchanged |
+| `attn_output_a`, shared down | 4.7 / 1.28 ms | within ±2% | unchanged |
+
+`attn_q_b` was bound by DRAM traffic (weight sweeps plus output writes);
+chunked it runs at 36 TFLOP/s, the level of the other shapes.
+`attn_output_b` re-reads as many weight bytes but moves 159 GB/s, under
+the ceiling, and its activations (33.6 MB) are as large as its weights:
+every chunking was slower. The rule: a matrix over 32 MiB runs in 5 MiB row
+chunks over all tiles when the batch's activations stay under 8 MiB and a
+chunk holds eight row blocks, and in 5 MiB row chunks over 12 MiB of tiles
+when it is over 64 MiB; everything else keeps one sweep per tile. Batches of
+300-1,100 tokens gain 6-13% on `attn_q_b` and lose nothing elsewhere.
+
+Served, streamed `UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision, one session,
+fresh server per run, base `706876f` against this change (`nix build`, same
+`flake.lock`), fresh prompts with `max_tokens` 1, run order base, new, new,
+base; replies identical in all four:
+
+| Prompt | Base | New | Change |
+| --- | ---: | ---: | ---: |
+| 2,287 tokens | 2,719 / 2,704 ms | 2,710 / 2,690 ms | −0.4% |
+| 14,144 | 14,243 / 14,274 | 14,063 / 13,948 | −1.8% |
+| 19,916 | 18,634 / 18,343 | 18,326 / 18,252 | −1.1% |
+| 23,943 | 21,843 / 21,637 | 21,457 / 21,428 | −1.4% |
+
+`ds41.mmq_typed` passes. [Runs](artifacts/2026-11-10-prefill-kernels/runs.json),
+[read rates](artifacts/2026-11-10-prefill-kernels/read-ramp.txt).
+
+## E109 — BF16 matmul: operands without rocWMMA, weights not staged in LDS (retained)
+
+The BF16 router, compressor and indexer kernels issue three products per
+weight fragment (the hi, mid and lo terms of each FP32 activation) and ran
+at 7-8 TFLOP/s per pass, 21-24 issued against the 55 TFLOP/s peak. Per K16
+step a wave loaded seven operands through `rocwmma::load_matrix_sync`
+for six products. rocWMMA keeps eight values per lane (half-wave h holds
+values 8 h .. 8 h + 7 of its row) and packs the 16-value operand at the
+product; on this device a 16-byte LDS read costs about as much as 30
+vector instructions and a product about 60 (`gfx1151_peak`: 6,280 GB/s of
+LDS reads, 27 TFLOP/s of FP32 FMAs, 55 TFLOP/s of products), so operand
+handling outweighed the products.
+
+Two changes, each bit-identical on every shape and token count tried, also
+with the production `-ffast-math` flags
+(`tools/bench/ds41_bf16_matmul.hip`, output hashes of both revisions):
+
+- `bf16_fragment`: one 16-byte LDS read per lane and four `permlanex16`
+  build the operand in rocWMMA's register layout (own half first). A first
+  version with both halves in value order was also faster but changed the
+  sums inside the products.
+- The narrow kernel (router, compressor, short passes) loads each lane's
+  half of the weight operands of the next K group straight from memory
+  into registers, so the weights never pass through LDS, and a thread
+  splits eight consecutive activations of one token, three 16-byte stores
+  instead of six 8-byte ones per load pair.
+
+| Shape | Before | Operands | Both |
+| --- | ---: | ---: | ---: |
+| Router 384 × 5,120, 2,048 tokens | 1,150 µs | 1,015 | 905 |
+| Router, 140 tokens (decoder replay) | 130 | 108 | 94 |
+| Router, 64 / 20 tokens | 77 / 56 | 57 / 53 | 51 / 39 |
+| Compressor 512 × 5,120, 2,048 tokens | 1,417 | 1,247 | 1,080 |
+| Indexer `q_b` 4,096 × 1,280, 2,048 tokens (wide kernel) | 2,620 | 2,100 | 2,100 |
+
+Router times do not grow evenly with the batch in any version (768 tokens
+494 → 315 µs, 1,024 tokens 516 → 517, 1,100 tokens 572 → 588, 1,280 tokens
+740 → 610); 2,048-token batches and the other sizes tried (256, 512, 1,536,
+4,096) gain 19-36%. The other
+tile shapes of the narrow kernel (64 or 16 tokens, 8 waves, 4 steps) were
+slower at 2,048 tokens than the retained 32 tokens × 4 waves × 2 steps.
+[Bench output](artifacts/2026-11-10-prefill-kernels/bf16-matmul.txt).
+
+Served as in E108, base `706876f` against E108 and this change together,
+run order new, base, base, new; replies identical:
+
+| Prompt | Base | New | Change |
+| --- | ---: | ---: | ---: |
+| 2,287 tokens | 2,704 / 2,707 ms | 2,772 / 2,689 ms | +0.9% |
+| 14,144 | 14,199 / 14,106 | 14,177 / 13,907 | −0.8% |
+| 19,916 | 18,495 / 18,473 | 18,119 / 18,077 | −2.1% |
+| 23,943 | 21,576 / 21,605 | 21,322 / 21,162 | −1.6% |
+
+The first run of the series (new) was the slowest new run on three of four
+prompts. This change alone was not isolated end to end; the kernels it
+touches took 0.94 s of a 24K prompt's 20.5 s of GPU time. A greedy DSpark
+decode pair (chat, code, long document, 512 tokens) gave identical replies;
+draft counts differ between runs as they do for one binary (E106).
+`ds41.attention` (BF16 against the FP32 kernel and wide against narrow)
+passes with the other eleven tests.
+
+## E110 — decode GEMV: workgroups striding over row tiles (rejected)
+
+The decode GEMVs read 208-220 GB/s served against a 240 GB/s ceiling that
+was measured on a 2 GiB read. `tools/bench/ds41_read_ramp.hip` reads
+DRAM-cold buffers of decode sizes: every thread striding over the whole
+buffer reaches 231-234 GB/s at 44 MiB and 216-233 at 4-24 MiB; workgroups
+that each read their own 64 KiB span reach 225 GB/s at 44 MiB and 228-232
+only from 64 MiB, and more loads
+in flight per lane are slower (214 GB/s with four). A dense GEMV workgroup
+reads 11-35 KiB.
+
+Tried: `gemv_kernel` with a fixed grid whose workgroups loop over the row
+tiles (tile, tile + grid, ...), the slice sums double-buffered in LDS so one
+barrier per tile suffices. Bit-identical to one workgroup per tile for
+Q8_0, Q6_K and Q5_K on the six decode shapes and the output head, and no
+faster at any grid from 40 to 640 workgroups (`attn_output_b` Q8_0 195-203
+µs against 197, `attn_q_b` 198-212 against 204, head 2,390-2,500 against
+2,333). Workgroup turnover is not what holds the GEMVs under the ceiling;
+at decode sizes a plain read with their access pattern is already 4-9 GB/s
+under the striding read. Reverted.
+[Read rates](artifacts/2026-11-10-prefill-kernels/read-ramp.txt).
+
+## E111 — hyper-connection state pass against the copy ceiling (measured)
+
+`hc_state_pass_kernel` is 7.7% of a served prompt's GPU time (483 calls of
+3.26 ms in a 24K prompt). `tools/bench/ds41_hc_state_bench.hip`, 2,048
+tokens: the collapse-only form 1.30 ms, the attention expand 2.26 ms (210 MB
+read, 210 MB written), the FFN expand with its six routed rows 3.64 ms
+(461 MB read, 210 MB written): 184-187 GB/s of combined traffic against a
+measured copy ceiling of ~209 GB/s (239 read, 220 write). Without the 24
+mix dots (timing only) the forms take 0.99 / 2.09 / 3.29 ms, 201-212 GB/s:
+the mix weights, read from the cache by every workgroup, cost 0.2-0.35 ms
+per call, ~0.15 s of a 24K prompt (0.7%). More tokens per workgroup would
+halve that but needs 128 more registers per lane. Left unchanged.
+[Bench output](artifacts/2026-11-10-prefill-kernels/hc-state-pass.txt).
+
+## E112 — 4,096-token prefill batches on served streamed text (measured)
+
+E16 measured `--prefill-batch 4096` on resident `IQ1_M` with the bench
+prompt (+2-3%). On streamed `UD-IQ2_XXS` with real documents, whose routes
+spread over nearly all 384 experts per batch, the build of E108/E109 gives
+(run order 4096, 2048, 4096; replies identical):
+
+| Prompt | 2,048 | 4,096 | Change |
+| --- | ---: | ---: | ---: |
+| 14,144 tokens | 13,951 ms | 13,259 / 13,182 ms | −5.2% |
+| 19,916 | 18,028 | 16,798 / 16,943 | −6.4% |
+| 23,943 | 21,549 | 20,153 / 20,133 | −6.5% |
+| The 23,943-token prompt again | 0 (cached) | 19,438 / 19,892 | prompt cache lost |
+
+Route hits rise from 96.6% to 97.2% and reads fall from 5.9 to 4.0 MiB per
+token. The larger sessions take ~0.55 GiB more (the expert cache's second
+seed grows by 2.00 instead of 2.55 GiB), and the prompt cache's first
+backing segment is refused at load (`backing_limited
+reason=device_heap_reserve`, 4.27 GB of device heap free), so every capture
+is refused and repeated or continued prompts run in full, as in E16. Not a
+default until the load seed leaves the sessions of a larger batch their
+room: [BACKLOG](BACKLOG.md#42-4096-token-prefill-batches-for-streamed-builds).
 
 ## Backlog measurements without an E-number
 
