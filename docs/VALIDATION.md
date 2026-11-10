@@ -80,6 +80,14 @@ again.
 
 ## Functional checks
 
+Release 0.2.0, November 11, 2026, on streamed `UD-IQ2_XXS` with the `MXFP8` Engram and
+DSpark, built at Gufo `0e2de43e` and run with Gufo's runner at the same revision:
+
+- The `conversation`, `tools`, `long-context` and `cache` suites (disk restart
+  included), and `reasoning-budget` with thinking on, passed.
+- With the vision projector loaded, the `image-inputs` and `tool-images` suites passed.
+- The Pi coding-agent replay passed 8 of 8 tasks, `image-read` included.
+
 On November 8, 2026, on streamed `UD-IQ2_XXS` and the resident Coder with DSpark:
 
 - Gufo's `conversation`, `tools`, `long-context`, `cache` (disk restart included),
