@@ -86,7 +86,8 @@ prefill batch, DSpark verification or a joint evaluation):
    otherwise drop or park it.
 3. Point each expert at its weights through **per-layer device tables**
    (gate, up, down; 40 × 384 pointers each): its cache slot when resident,
-   else its row in the demand stage or the adopted job's stage. The kernels
+   else the demand stage row or slot its read fills, or its row in the
+   adopted job's stage. The kernels
    index the table, so resident experts are read in place with no staging
    copy. A host mirror records the entries; a layer's table is uploaded
    asynchronously only when an entry changed, which a warm cache rarely
@@ -116,9 +117,16 @@ its pinned mirror is rewritten.
   merge into reads of at most 32 MiB, ordered by shard and offset. The GGUF
   stores each layer's experts as three projection-major blocks, so one
   expert is three reads about 1 GiB apart.
-- **Demand stage.** A whole-layer buffer indexed by expert. One buffer
-  suffices: the routes copy orders a layer's demand reads behind the
-  previous layer's compute.
+- **Demand stage.** 64 rows (0.6 GiB), assigned per call in expert order at
+  the layer's own row size, so experts adjacent in the file stay adjacent
+  in the stage. One buffer suffices: the routes copy orders a layer's
+  demand reads behind the previous layer's compute. A batch with more
+  misses than rows (a cold prefill batch) reads the experts it admits
+  straight into their slots and gives the rows to the others; those past
+  the rows fill free slots or take a lent one, a spare slot or the lowest
+  keep value's. Lent slots stay unoccupied, return to the spare slots at
+  the next call, and are the first an admitted expert takes, so the
+  admission policy does not change (E119).
 - **Prefetch stage.** A compact 96-row buffer in two 48-row parity halves,
   allocated when prefetch first runs, so it never shrinks the seed. A job's
   experts take rows in its layer's half, addressed with the allocation

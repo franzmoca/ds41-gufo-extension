@@ -34,6 +34,10 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ### Performance
 
+* **streaming:** the demand stage for missed experts takes 0.6 GiB instead of
+  3.7 GiB, which leaves streamed builds ~3.8 GiB more expert cache: decode
+  1.1-1.6% and prefill 2.4-2.7% faster on `UD-IQ2_XXS`, outputs unchanged
+  ([E119](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e119--a-64-row-demand-stage-misses-past-it-read-into-cache-slots-retained)).
 * **streaming:** the prompt cache keeps 16 transfer streams plus one per
   session instead of Gufo's 64, which leaves streamed builds ~0.3 GiB more
   expert cache. The extension now needs Gufo's extension API 0.2.17
