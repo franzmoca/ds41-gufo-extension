@@ -32,7 +32,7 @@ follow in their own sections.
 
 | Rank | # | Item | Expected gain (evidence) | Next step |
 | ---: | ---: | --- | --- | --- |
-| 1 | 30 | More memory for the expert cache | Replays: +3.7 GiB −28% decode misses; the decoder replay's cold experts (0.91 s) are capacity-bound (E86). E93 gave one session +1.9 GiB | Compact demand stage (~3 GiB) |
+| 1 | 30 | More memory for the expert cache | Replays: +3.7 GiB −28% decode misses; the decoder replay's cold experts (0.91 s) are capacity-bound (E86). E93 gave one session +1.9 GiB, the 64-row demand stage +3.8 GiB (E119: decode −1.1 to −1.6%) | Every admitted miss straight into its slot; the 2 GiB headroom |
 | 2 | 37 | Cheap prefetch adoption, then every-layer decode prediction | +2.3-2.8% decode simulated once adoption is free (E89); Belady would halve decode misses (E92) | Stop resolving a running job on hit layers |
 | 3 | 31 | Eviction scoring and prompt admission | Frequency classes retained (E105); admitting every expert routed twice cut follow-up misses 32% but slowed prefill | Re-measure admission after direct-to-slot uploads |
 | 4 | 9 | Stable-boundary prefill pass per chat request | 64.6 ms per chat request (measured pass cost) | Snapshot or skip the N−3 capture |
@@ -74,9 +74,9 @@ the decoder replay's drive-bound stall (E86). Replay data:
   read, never evicting an expert the batch routes (replay −0.16% misses);
   removes one copy and frees the demand stage for the next part. Item 31's
   admission waits on it.
-- **Compact demand stage** (~3.7 → ~0.6 GiB): prefill layers with more
-  misses run in passes over route subsets (E82/E84 already split resident
-  and read routes), double-buffered.
+- **Compact demand stage** (done, E119): 64 rows; a batch with more misses
+  reads admitted experts into their slots and lends slots to the rest.
+  +3.8 GiB of cache, decode −1.1 to −1.6%, prefill −2.4 to −2.7%.
 - **Prefetch stage** (done, E104): 96 rows, truncated wide jobs keep the
   most-routed experts; ~0.9 GiB to the cache. 48 rows slow a 3.5K prompt
   on a cold cache by 5-9%. The prompt cache keeps 16 transfer streams plus one
@@ -155,6 +155,10 @@ prefix prices misses only through average cycle times (E18, E87);
 verification batches already predict after a missed layer (E31). Charge
 each row the miss bytes of its own routes when choosing the width. See
 [DECODE.md lever 3](DECODE.md#3-verification-row-cost-on-the-streamed-build).
+Sampled cycles cannot choose better from q alone (E117: the 0.6 cut is
+within 0.2% of the best prefix rule; ~7% of decode goes to rows past the
+first rejection), and a linear cost model for greedy widths lost 1.5% on
+code and documents (E116).
 
 ### 6. Routed FP16 kernel: weight decode
 
@@ -292,7 +296,9 @@ against an uncached prompt.
 - **Device top-k sampling.** After E88, top-k, penalties and constraints
   still build the full distribution on the host (~0.85 ms per row); a
   device top-k filter with the host's uniforms and tie rules keeps seeded
-  outputs identical.
+  outputs identical. Constrained (tool-call) draws cost the agent replay ~2 s
+  of ~160 s on the host and mask misses ~2.6 s; computing masks ahead or a
+  larger mask cache did not show in decode time (E118).
 - **Tokenizer merges** rescan adjacent pairs (`bpe_rank`); Qwen's heap
   merge is the precedent. **`gufo diagnose`** lacks streaming statistics.
 - **Encoder SWA replay on a frontier miss.** Approximate; needs its own

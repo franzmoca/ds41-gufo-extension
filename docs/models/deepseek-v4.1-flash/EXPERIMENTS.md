@@ -149,6 +149,10 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E113](#e113--load-headroom-that-grows-with-the-prefill-batch-retained) | streaming | retained | The load seed leaves 320 KiB per batch token above 2,048, so `--prefill-batch 4096` keeps its prompt cache: fresh 15-24K prompts −2.6 to −7.7% against 2,048 with cached repeats and continuations; expert cache −1.1 to −1.3 GiB, AR decode within ±0.7%. The batch size changes replies after a 24K prompt, so it stays an option. |
 | [E114](#e114--fp16-prefill-kernels-sum-order-by-weight-row-retained) | prefill kernels, quality | retained | A routed or dense FP16 value's sum order followed the parity of its route's index in the expert's list, or of its token's place in the batch; with the weights as the product's first operand it follows the weight row. Logits are bit-identical between 2,048- and 4,096-token batches at 3K and 18.5K; against the oracle the build moves from −0.0018 ± 0.0014 to +0.0023 ± 0.0015 nats at 18.5K. Dense FP16-input kernels 3-5% slower in the bench; served prefill unchanged within noise. |
 | [E115](#e115--4096-token-batches-as-the-streamed-default-rejected) | prefill pipeline | rejected | 4,096-token batches as the default for streamed models: fresh 14-24K prompts −4.7 to −6.9%, a 2.3K prompt +3.2%, DSpark decode +0.2 to +2.1%, AR decode +0.5 to +0.8%, expert cache −1.2 to −1.7 GiB. Stays an option. |
+| [E116](#e116--greedy-draft-width-from-a-linear-verification-cost-rejected) | DSpark policy | rejected | Greedy draft width from `plain + w × row` times with clamped samples and a gate on the predicted saving, instead of a time per width: chat 19.05 against 19.00 tok/s, code −1.6%, long document −1.5%, replies identical. |
+| [E117](#e117--sampled-draft-width-from-the-proposal-concentration-rejected) | DSpark policy | rejected | Sampled cycles verified at full width and replayed offline: no prefix rule over q's top probability or a point mass's raw concentration beats the 0.6 cut by more than 0.2%; knowing the accepted prefix would give −20% (chat/code/long) and −11% (agent). |
+| [E118](#e118--json-constraint-masks-computed-ahead-of-the-selection-rejected) | sampling, tools | rejected | Tool-call cycles spend ~4% of agent decode on the host (mask misses 3-10 ms, constrained draws ~0.8 ms per row). Walking the proposals' grammar states during the evaluation: 162.2 against 161.6 s per replay; a 1,024-entry mask cache: 158.7 against 157.1 s. |
+| [E119](#e119--a-64-row-demand-stage-misses-past-it-read-into-cache-slots-retained) | expert cache | retained | The whole-layer demand stage (3.7 GiB) becomes 64 rows; a batch with more misses reads the experts it admits into their slots and lends slots to the rest. Expert cache 97.2 → 101.0 GiB: replies at server defaults decode −1.6%, prefill −2.4%; agent replay decode −1.1% (base runs 1.9% apart), prefill −2.7%, 16% fewer MiB read per token. Outputs identical. |
 
 ## Milestones
 
@@ -4381,6 +4385,133 @@ per batch token did not stop one backing segment being refused at load
 (0.83 GiB committed against 0.95 GiB, no capture refused); with four
 sessions a segment is refused at 2,048 too. Not retained.
 [Runs](artifacts/2026-11-10-prefill-kernels/runs.json).
+
+## E116 — greedy draft width from a linear verification cost (rejected)
+
+One traced greedy chat reply (17.1 tok/s) showed the width policy pricing
+one-draft cycles out after two verifications that waited ~240 ms on expert
+reads, and the gate falling back to plain steps. A replacement policy
+modelled a verification of w drafts as `plain + w × row` (two estimates
+learned from every cycle, each sample clamped to 0.5-1.5× the estimate)
+and gated drafting on the average predicted saving of the chosen widths
+rather than the realized one. Replaying the trace predicted ~20.5 tok/s for
+chat and +1.6% for code and the long document.
+
+Streamed `UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision, greedy, 512-token
+replies, a fresh server per run, in the order base, candidate, candidate,
+base; replies identical in all four:
+
+| | Base | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Chat (41-token prompt) | 18.74 / 19.25 tok/s | 19.15 / 18.94 | +0.3% (within the base spread) |
+| Code (3.5K) | 28.50 / 28.30 | 28.10 / 27.77 | −1.6% |
+| Long document (24K) | 28.62 / 28.48 | 28.08 / 28.20 | −1.5% |
+
+The traced reply was not the usual case: untraced base chat runs at
+18.7-19.3 tok/s. On code and the long document the measured time per width
+chooses slightly better widths than the linear model. Not retained.
+
+## E117 — sampled draft width from the proposal concentration (rejected)
+
+Sampled cycles verify the prefix of drafts whose q top probability is at
+least 0.6 (a point mass, top ≥ 0.7, counts as 1). To look for a better
+rule, a build verified all five drafts of every sampled cycle and traced
+each draft's top probability, a point mass's concentration before it was
+rounded to 1, and the accepted prefix; rules were then replayed offline
+with the measured costs (cycle 57.6 ms, drafter pass 8.3 ms, 14.0 ms per
+verified row). Server default sampling (temperature 1, top-p 1, seeded):
+605 full-width cycles of the chat/code/long replies and 998 of the agent
+replay ([2026-11-09-agent-replay](artifacts/2026-11-09-agent-replay/)).
+
+| Rule | Chat/code/long | Agent replay |
+| --- | ---: | ---: |
+| Prefix with top ≥ 0.6, point masses kept (current) | 43.23 ms/token | 29.33 |
+| Point masses kept at concentration ≥ 0.8 | 43.13 | 29.28 |
+| Point masses kept at concentration ≥ 0.9 | 44.24 | 29.42 |
+| Prefix with top ≥ 0.5 | 44.29 | 29.49 |
+| Expected-value width from per-bin acceptance (earlier trace) | 43.00 | 29.33 |
+| Knowing the accepted prefix | 34.64 | 26.23 |
+
+Acceptance rises with the concentration (0.48-0.62 below 0.9, 0.79-0.90 up
+to 0.995, 0.99-1.00 above on the replies; 0.55-0.69, 0.68-0.93 and
+0.96-0.99 on the agent), but a row accepted half of the time still pays
+for its 14 ms. Rows past the first rejection take ~7% of decode time and
+cycles cut to no draft ~2.4%; neither is predictable from q. The rule
+stays.
+
+The same profile gives a verified row's cost at these defaults: ~15.5 ms,
+of it routed experts 8.4 ms (at the ~232 GB/s read ceiling), idle time and
+expert read stalls ~3 ms, dense projections 1.2 ms, attention 1.2 ms.
+Verifications of 1 to 6 rows took 58.5 / 74.5 / 87.0 / 102.6 / 118.3 /
+135.8 ms.
+
+## E118 — JSON constraint masks computed ahead of the selection (rejected)
+
+In the agent replay the host time after a sampled evaluation is bimodal:
+0.3-0.9 ms for most cycles, 3-40 ms for about a quarter of them, ~5 s of
+~160 s. Those cycles are inside tool calls: the request's JSON constraint
+needs a vocabulary mask per grammar state (3-10 ms when Gufo's 16-entry
+mask cache misses), and a constrained selection runs on the host sampler
+(~0.8 ms per row) instead of the device draw.
+
+- **Walking the proposals' states during the evaluation.** A copy of the
+  sampler accepted the cycle's proposals on a second thread, so the masks
+  were computed while the GPU evaluated. Agent replay, in the order base,
+  candidate, candidate, base: 160.15 / 162.97 s against 162.62 / 161.84 s,
+  5,800 tokens and 3,732 / 3,099 drafted / accepted in all four. The
+  selection thread still paid 2.6 s of mask checks: the cache evicts its
+  smallest key, so states computed ahead were dropped before their use.
+- **A 1,024-entry mask cache** (a diagnostic build of Gufo, one traced
+  replay each): misses 3,354 → 208 and the selection thread's mask time
+  2.6 s → 0, but the host time of those cycles only 5.3 → 4.9 s and decode
+  158.69 against 157.05 s.
+
+Neither is measurable in decode time. The remaining ~2 s are constrained
+host draws, which a masked device draw would remove (BACKLOG, device
+top-k sampling). Not retained.
+
+## E119 — a 64-row demand stage, misses past it read into cache slots (retained)
+
+The demand stage held a row per expert id (384 rows, 3.7 GiB) for the cold
+prefill batch that misses most of a layer; a decode batch misses a few
+experts and a warm prefill batch some tens. Capping the cache 3 GiB lower
+first showed what that memory is worth (base build, in the order full,
+capped, capped, full): agent replay decode 156.8 / 163.4 s against 166.0 /
+166.5 s (+3.8%) and prefill +3.8%; chat/code/long replies decode +1.0%.
+
+The stage now has 64 rows (0.6 GiB), assigned per call in expert order at
+the layer's own row size, so experts adjacent in the file still merge into
+one read. A batch with more uncovered misses reads the experts it admits
+straight into their slots (no stage-to-slot copy) and gives the rows to the
+others; those past the rows fill free slots, as a scan always did, or take
+a lent slot: a spare one, else the lowest keep value's. A lent slot stays
+unoccupied, serves its call and joins the spare slots at the next call;
+admitted experts take spare slots before they evict, so what a cold prompt
+set aside returns to the cache as decode admits its misses, and the
+admission policy is unchanged. A cache smaller than a batch's misses falls
+back to rows allocated on demand. The kernels and the decoder are
+unchanged: they index the per-layer weight tables as before.
+
+Streamed `UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision, one session, server
+default sampling (seeded), a fresh server per run, in the order base,
+candidate, candidate, base:
+
+| | Base | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Expert cache | 97.0-97.5 GiB | 101.0-101.1 GiB | +3.8 GiB |
+| Free memory, lowest | 1.6-2.1 GiB | 1.5-1.7 GiB | |
+| Chat/code/long replies, decode (1,536 tokens) | 65.96 / 66.05 s | 64.95 / 64.95 s | −1.6% |
+| Their prefill | 28.63 / 28.29 s | 27.84 / 27.71 s | −2.4% |
+| Route hits; MiB read per token | 95.1-95.3%; 9.8-10.0 | 95.7%; 9.0 | |
+| Agent replay, decode (53 requests, 5,800 tokens) | 159.43 / 162.41 s | 159.24 / 159.06 s | −1.1% |
+| Its prefill | 36.06 / 36.07 s | 35.06 / 35.14 s | −2.7% |
+| Route hits; MiB read per token | 98.0-98.1%; 29.3-29.7 | 98.4%; 24.7-24.8 | |
+
+Replies are identical on the chat/code/long workload (also greedy), and
+tokens and drafted / accepted counts (3,732 / 3,099; 1,403 / 822) match in
+every run. The agent decode gain is within the spread of its two base runs;
+its prefill gain and the replies' gains are not. Retained.
+[Runs](artifacts/2026-11-10-compact-demand-stage/runs.json).
 
 ## Backlog measurements without an E-number
 
