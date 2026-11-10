@@ -148,6 +148,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E112](#e112--4096-token-prefill-batches-on-served-streamed-text-measured) | prefill pipeline | measured | `--prefill-batch 4096` on streamed `UD-IQ2_XXS`: fresh 15-24K prompts −5 to −8.5%, but the prompt cache's backing is refused at load and repeated prompts run again in full. |
 | [E113](#e113--load-headroom-that-grows-with-the-prefill-batch-retained) | streaming | retained | The load seed leaves 320 KiB per batch token above 2,048, so `--prefill-batch 4096` keeps its prompt cache: fresh 15-24K prompts −2.6 to −7.7% against 2,048 with cached repeats and continuations; expert cache −1.1 to −1.3 GiB, AR decode within ±0.7%. The batch size changes replies after a 24K prompt, so it stays an option. |
 | [E114](#e114--fp16-prefill-kernels-sum-order-by-weight-row-retained) | prefill kernels, quality | retained | A routed or dense FP16 value's sum order followed the parity of its route's index in the expert's list, or of its token's place in the batch; with the weights as the product's first operand it follows the weight row. Logits are bit-identical between 2,048- and 4,096-token batches at 3K and 18.5K; against the oracle the build moves from −0.0018 ± 0.0014 to +0.0023 ± 0.0015 nats at 18.5K. Dense FP16-input kernels 3-5% slower in the bench; served prefill unchanged within noise. |
+| [E115](#e115--4096-token-batches-as-the-streamed-default-rejected) | prefill pipeline | rejected | 4,096-token batches as the default for streamed models: fresh 14-24K prompts −4.7 to −6.9%, a 2.3K prompt +3.2%, DSpark decode +0.2 to +2.1%, AR decode +0.5 to +0.8%, expert cache −1.2 to −1.7 GiB. Stays an option. |
 
 ## Milestones
 
@@ -4348,6 +4349,37 @@ Served with both changes, base `0de9173`, order new, base, base, new:
 / 13,730 against 14,213 / 14,163, 19,916 tokens 18,093 / 18,037 against
 18,455 / 18,135, 23,943 tokens 21,295 / 21,269 against 21,258 / 21,239:
 −1.4% to +0.2%, within noise.
+[Runs](artifacts/2026-11-10-prefill-kernels/runs.json).
+
+## E115 — 4,096-token batches as the streamed default (rejected)
+
+With E113 and E114 a 4,096-token batch keeps its prompt cache and gives
+the logits of 2,048, so it was tried as the default for streamed models
+(resident ones have no memory for it). Streamed `UD-IQ2_XXS`, `MXFP8`
+Engram, DSpark, vision, one session, one build, the default against
+`--prefill-batch 2048`; prefill and DSpark decode alternating:
+
+| | 2,048 | 4,096 | Change |
+| --- | ---: | ---: | ---: |
+| Fresh 2,287-token prompt | 2,662 / 2,649 ms | 2,744 / 2,735 ms | +3.2% |
+| Fresh 14,144 | 14,864 / 13,839 | 13,948 / 13,252 | −5.2% |
+| Fresh 19,916 | 18,278 / 18,147 | 17,017 / 16,904 | −6.9% |
+| Fresh 23,943 | 21,322 / 21,267 | 20,298 / 20,291 | −4.7% |
+| Its first half after it (cached prefix) | 2,843 / 2,875 | 2,870 / 2,941 | +1.6% |
+| DSpark, chat, 512 tokens | 26.91 / 27.47 s | 27.52 / 27.62 s | +1.4% |
+| DSpark, code | 17.91 / 17.79 | 18.09 / 18.35 | +2.1% |
+| DSpark, after the 24K document | 18.82 / 17.77 | 18.03 / 18.65 | +0.2% |
+| AR, chat / code / long (one run) | 29.59 / 26.99 / 29.03 s | 29.74 / 27.21 / 29.18 s | +0.5 to +0.8% |
+| Expert cache | 97.3-97.6 GiB | 95.6-96.3 GiB | −1.2 to −1.7 GiB |
+| Four sessions: cache, 64 tokens | 95.61 GiB, 4.08 s | 94.24 GiB, 4.12 s | |
+
+Long fresh prompts gain; short prompts and decode lose to the smaller
+expert cache (route hits 93.9% against 95.1-95.3% in the DSpark runs).
+Serving is mostly decode and short or cached prompts, so 2,048 stays the
+default and 4,096 an option. Raising the load headroom from 320 to 400 KiB
+per batch token did not stop one backing segment being refused at load
+(0.83 GiB committed against 0.95 GiB, no capture refused); with four
+sessions a segment is refused at 2,048 too. Not retained.
 [Runs](artifacts/2026-11-10-prefill-kernels/runs.json).
 
 ## Backlog measurements without an E-number
