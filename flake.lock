@@ -29,11 +29,11 @@
         "rust-overlay": "rust-overlay"
       },
       "locked": {
-        "lastModified": 1794222746,
-        "narHash": "sha256-GtEw5JC6THarjUnfSVJwjH0sSzP2FfSyai5pjQTG8Jc=",
+        "lastModified": 1794318180,
+        "narHash": "sha256-TerzaaH83Q4u2Y9qmqzua0nN6I0PFsyEfaCrOeYyf78=",
         "owner": "gufo-org",
         "repo": "gufo",
-        "rev": "fe2694bce83008910fe135d6f800846b5d5673cb",
+        "rev": "0e2de43ec01540079fbec30492b06704796d725e",
         "type": "github"
       },
       "original": {
