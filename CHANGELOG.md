@@ -5,6 +5,19 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ## Unreleased
 
+## 0.2.0 (2026-11-11)
+
+Built on upstream Gufo `0e2de43e` (0.33.0); needs extension API 0.2.17 or
+later.
+
+### Known limitations
+
+* Resident `IQ1_M` with DSpark keeps no prompt-cache checkpoints, as with
+  vision: the device heap they leave is under the 4 GiB that Gufo's cache keeps
+  free. Multi-user DSpark cannot prepare its sessions from a shared prefix, so
+  that benchmark does not run on resident `IQ1_M`; stream it instead
+  ([benchmarks](docs/models/deepseek-v4.1-flash/BENCHMARKS.md#multiple-users-dspark)).
+
 ### Dependencies
 
 * **Gufo:** pinned to `0e2de43e` (0.33.0), with disk prompt-cache fixes,
