@@ -1,0 +1,54 @@
+{
+ "3k": {
+  "model": "DeepSeek-V4.1-Flash-1017-UD-IQ2_XXS-00001-of-00006.gguf",
+  "general.name": "DeepSeek-V4.1-Flash-1017",
+  "generated_tokens": [],
+  "device": "cuda",
+  "weight_dtype": "float32",
+  "seconds": [
+   371.8241765499115
+  ],
+  "reference": "official inference/model.py + engram.py, DeepSeek-V4.1-Flash-1017",
+  "oracle_sha256": "c95319c4a3c8d92d68b8cad031e4d74e4a4b8439b459a7419c17f44704c22be6",
+  "score": {
+   "positions": 2999,
+   "top1": 0.5861953984661554,
+   "mean_nll": 1.8235472440719604,
+   "ppl": 6.193790435791016,
+   "top1_0": 0.474609375,
+   "nll_0": 2.5782673358917236,
+   "top1_512": 0.685546875,
+   "nll_512": 1.3872356414794922,
+   "top1_1024": 0.6376953125,
+   "nll_1024": 1.557991623878479,
+   "top1_2048": 0.53732912723449,
+   "nll_2048": 1.9380621910095215
+  }
+ },
+ "18k": {
+  "model": "DeepSeek-V4.1-Flash-1017-UD-IQ2_XXS-00001-of-00006.gguf",
+  "general.name": "DeepSeek-V4.1-Flash-1017",
+  "generated_tokens": [],
+  "device": "cuda",
+  "weight_dtype": "float32",
+  "seconds": [
+   716.667934179306
+  ],
+  "reference": "official inference/model.py + engram.py, DeepSeek-V4.1-Flash-1017",
+  "oracle_sha256": "c95319c4a3c8d92d68b8cad031e4d74e4a4b8439b459a7419c17f44704c22be6",
+  "score": {
+   "positions": 18499,
+   "top1": 0.6094383480188118,
+   "mean_nll": 1.7419533729553223,
+   "ppl": 5.70848274230957,
+   "top1_0": 0.490234375,
+   "nll_0": 2.43232798576355,
+   "top1_512": 0.677734375,
+   "nll_512": 1.3679652214050293,
+   "top1_1024": 0.662109375,
+   "nll_1024": 1.5076253414154053,
+   "top1_2048": 0.6077442100784147,
+   "nll_2048": 1.7466922998428345
+  }
+ }
+}

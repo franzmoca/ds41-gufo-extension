@@ -209,6 +209,30 @@
         "testing"
       ],
       "role": "test"
+    },
+    "deepseek41flash_load_probe": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_mmq_bench": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_gemv_bench": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
+    "deepseek41flash_vision_probe": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
     }
   },
   "licenses": [
