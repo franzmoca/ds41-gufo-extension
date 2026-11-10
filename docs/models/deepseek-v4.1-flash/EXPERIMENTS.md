@@ -147,6 +147,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E111](#e111--hyper-connection-state-pass-against-the-copy-ceiling-measured) | prefill kernels | measured | The batched state pass moves 184-187 GB/s of reads and writes against a ~209 GB/s copy ceiling; its 24 mix dots cost 0.2-0.35 ms of 2.3-3.6 ms. Left unchanged. |
 | [E112](#e112--4096-token-prefill-batches-on-served-streamed-text-measured) | prefill pipeline | measured | `--prefill-batch 4096` on streamed `UD-IQ2_XXS`: fresh 15-24K prompts −5 to −8.5%, but the prompt cache's backing is refused at load and repeated prompts run again in full. |
 | [E113](#e113--load-headroom-that-grows-with-the-prefill-batch-retained) | streaming | retained | The load seed leaves 320 KiB per batch token above 2,048, so `--prefill-batch 4096` keeps its prompt cache: fresh 15-24K prompts −2.6 to −7.7% against 2,048 with cached repeats and continuations; expert cache −1.1 to −1.3 GiB, AR decode within ±0.7%. The batch size changes replies after a 24K prompt, so it stays an option. |
+| [E114](#e114--fp16-prefill-kernels-sum-order-by-weight-row-retained) | prefill kernels, quality | retained | A routed or dense FP16 value's sum order followed the parity of its route's index in the expert's list, or of its token's place in the batch; with the weights as the product's first operand it follows the weight row. Logits are bit-identical between 2,048- and 4,096-token batches at 3K and 18.5K; against the oracle the build moves from −0.0018 ± 0.0014 to +0.0023 ± 0.0015 nats at 18.5K. Dense FP16-input kernels 3-5% slower in the bench; served prefill unchanged within noise. |
 
 ## Milestones
 
@@ -4260,9 +4261,93 @@ within ±0.7%.
 
 The batch size is not output-neutral: after the 23,974-token document the
 two servers' greedy replies part at the 15th token (chat and code replies
-are identical, as are all one-token prompt replies). Which batched path
-depends on the batch boundaries was not traced. 4,096 therefore stays an
-option; as a default it would need the quality gates of an output change.
+are identical, as are all one-token prompt replies): the routed FP16
+kernel's sum order depended on the batch; E114 removes that.
+[Runs](artifacts/2026-11-10-prefill-kernels/runs.json).
+
+## E114 — FP16 prefill kernels: sum order by weight row (retained)
+
+E113's replies differed between batch sizes. A per-layer state dump of the
+24K prompt at 2,048 and 4,096 tokens per batch (temporary; positions
+0-2,047 equal at every layer): rows in the second half of a 4,096-token
+batch differ from layer 1 on, by ~1e-7 relative, and of layer 0's
+intermediates only the routed down output differs. In `routed_f16_kernel`
+and `dense_f16_kernel` half 1 of a wave holds each K16 step with its two
+groups swapped (E24), and the accumulator's half followed the slot or the
+token: element e of a lane was (slot or token 2 e + lane / 16, weight row
+lane % 16). So the order of a value's sum followed the parity of the
+route's index in its expert's row list (routed), which a larger batch
+shifts for its later rows, or of the token's place in its batch (dense),
+which a batch starting at an odd position shifts, as a continuation of an
+odd-length cached prefix does. Standalone: an expert's list shifted by one
+changed 94% of the IQ2_S, IQ2_XXS and IQ1_S down outputs, a dense batch
+started one token later 94% of the Q8_0, Q6_K and Q5_K outputs; shifted by
+two, none.
+
+Change: the weights are the product's first operand in both kernels, so
+element e is (weight row 2 e + lane / 16, slot or token lane % 16) and the
+order follows the weight row's parity. The same products and instruction
+count in the K loop; the shifted lists and batches give identical bits.
+The BF16 kernels already had the weights first. All twelve tests pass.
+
+Gate, streamed `UD-IQ2_XXS` with the MXFP8 Engram, teacher-forced logits of
+`ds41_load_probe --decode IDS [--batch]` (ported to `tools/probe/`),
+previous kernels (`0de9173`) against these, `tools/ds41/compare_logits.py`:
+
+| Text, run | Perplexity | NLL against the previous batched run | KL mean | Argmax agreement |
+| --- | ---: | ---: | ---: | ---: |
+| 3K, previous, 2,048 | 6.151 | | | |
+| 3K, new, 2,048 | 6.201 | +0.0080 ± 0.0037 | 0.023 | 93.8% |
+| 3K, previous, 4,096 | 6.166 | +0.0024 ± 0.0017 | 0.004 | 98.4% |
+| 3K, new, 4,096 | 6.201 | bit-identical to new 2,048 | | |
+| 3K, token by token, previous and new | 6.156 | bit-identical to each other | 0.024 | 92.8% |
+| 18.5K, previous, 2,048 | 5.698 | | | |
+| 18.5K, new, 2,048 | 5.721 | +0.0041 ± 0.0015 | 0.014 | 95.0% |
+| 18.5K, previous, 4,096 | 5.699 | +0.0001 ± 0.0015 | 0.011 | 95.6% |
+| 18.5K, new, 4,096 | 5.721 | bit-identical to new 2,048 | | |
+
+The new batched logits are as far from the previous ones as the batched
+path is from the token-by-token path, but their NLL is higher by 2.2 and
+2.7 standard errors. Against the oracle (`reference.py run --score`,
+torch on the GPU, 372 s and 717 s) the two builds sit on either side:
+
+| Text, run | Perplexity | Top-1 | NLL against the oracle | Argmax agreement |
+| --- | ---: | ---: | ---: | ---: |
+| 3K, oracle | 6.194 | 58.6% | | |
+| 3K, previous, batched | 6.151 | 59.0% | −0.0069 ± 0.0042 | 93.7% |
+| 3K, new, batched | 6.201 | 58.9% | +0.0011 ± 0.0042 | 93.4% |
+| 3K, token by token | 6.156 | 58.7% | −0.0060 ± 0.0046 | 94.0% |
+| 18.5K, oracle | 5.708 | 60.9% | | |
+| 18.5K, previous, batched | 5.698 | 61.0% | −0.0018 ± 0.0014 | 94.8% |
+| 18.5K, new, batched | 5.721 | 61.0% | +0.0023 ± 0.0015 | 94.9% |
+
+Both are within 1.6 standard errors of the oracle and agree with its
+argmax equally often; the difference between the builds is real, but
+neither is measurably closer to the reference. Why one assignment of the
+two sum orders scores 0.004 nats above the other is not explained.
+The oracle's per-position scores, the token ids and both tables are in
+[artifacts/2026-11-10-prefill-kernels/oracle](artifacts/2026-11-10-prefill-kernels/oracle/).
+
+Served AR replies (chat, code, long document, 512 tokens) are identical
+between 2,048- and 4,096-token batches with the routed change (the long
+reply differed before) and all differ from the previous build's. Speed:
+the routed change alone left served prefill unchanged (14,144 tokens
+14,138 / 13,715 against 13,955 / 13,606 ms, 23,943 tokens 21,179 / 21,039
+against 21,184 / 21,402). The dense kernel is slower with FP16 inputs:
+`ds41_dense_f16_cache`, alternating, `attn_q_b` 4.56 → 4.81 ms,
+`attn_output_b` 4.49 → 4.70, `attn_output_a` 4.60 → 4.70, shared down
+1.28 → 1.33, shared gate + up and `attn_q_a` + `attn_kv` unchanged, with
+185 VGPRs and the same occupancy before and after. A lane now stores eight
+rows of one token instead of one row of eight tokens, but that is not the
+cause: turning each wave's results through LDS to restore the old store
+pattern was bit-identical and no faster (4.90 / 4.72 / 4.61 / 1.36 ms);
+not retained
+([BACKLOG](BACKLOG.md#43-dense-fp16-kernel-after-the-operand-swap)).
+Served with both changes, base `0de9173`, order new, base, base, new:
+2,287 tokens 2,646 / 2,653 against 2,689 / 2,685 ms, 14,144 tokens 14,683
+/ 13,730 against 14,213 / 14,163, 19,916 tokens 18,093 / 18,037 against
+18,455 / 18,135, 23,943 tokens 21,295 / 21,269 against 21,258 / 21,239:
+−1.4% to +0.2%, within noise.
 [Runs](artifacts/2026-11-10-prefill-kernels/runs.json).
 
 ## Backlog measurements without an E-number

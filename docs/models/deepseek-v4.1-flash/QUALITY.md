@@ -641,6 +641,32 @@ outputs. This does not replace the 3K teacher scores or DSpark qualification,
 which were not repeated for E75. See [E75](EXPERIMENTS.md#e75--grouped-bf16-routercompressor-prefill-retained)
 for timing scope and limits.
 
+## Batch-independent FP16 prefill sums (E114)
+
+Streamed `UD-IQ2_XXS` with the MXFP8 Engram, teacher-forced over the 3K and
+18.5K texts ([token ids](artifacts/2026-11-10-prefill-kernels/oracle/)),
+batched, after the routed and dense FP16 kernels took the weights as the
+product's first operand:
+
+| Positions | Run | Perplexity | Top-1 | Argmax agreement with the oracle | Mean ΔNLL against the oracle |
+|---:|---|---:|---:|---:|---:|
+| 2,999 | oracle | 6.194 | 58.6% | — | — |
+| 2,999 | batched before | 6.151 | 59.0% | 93.7% | −0.0069 ± 0.0042 |
+| 2,999 | batched | 6.201 | 58.9% | 93.4% | +0.0011 ± 0.0042 |
+| 2,999 | decode (unchanged) | 6.156 | 58.7% | 94.0% | −0.0060 ± 0.0046 |
+| 18,499 | oracle | 5.708 | 60.9% | — | — |
+| 18,499 | batched before | 5.698 | 61.0% | 94.8% | −0.0018 ± 0.0014 |
+| 18,499 | batched | 5.721 | 61.0% | 94.9% | +0.0023 ± 0.0015 |
+
+Batched logits are bit-identical between 2,048- and 4,096-token batches on
+both texts (they were not before), and the decode path's logits are
+bit-identical to the previous build's. These oracle scores replace the
+IQ4_NL-Engram ones above as the reference for this build:
+`tools/ds41/compare_logits.py IDS --oracle SCORE.npz RUN` scores a
+`ds41_load_probe --out` dump against them
+([scores](artifacts/2026-11-10-prefill-kernels/oracle/),
+[E114](EXPERIMENTS.md#e114--fp16-prefill-kernels-sum-order-by-weight-row-retained)).
+
 ## Expert-pruned GSQ-RCO Coder
 
 ISTA-DASLab's

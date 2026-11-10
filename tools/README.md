@@ -40,10 +40,47 @@ These replay an expert trace, which the engine writes with `DS41_EXPERT_TRACE=PA
 | `ds41/dspark_reference.py` | CPU oracle for one DSpark draft |
 | `ds41/vision_reference.py` | CPU reference for the vision encoder |
 | `ds41/chat_goldens.py` | Chat-template goldens from the official encoder (`tests/fixtures/encoding-1017.json`) |
+| `ds41/compare_logits.py` | Perplexity, NLL difference, KL and argmax agreement between `ds41_load_probe` logits dumps |
 
-`dspark_reference.py` and `vision_reference.py` compare against dumps from GPU probes
-(`ds41_load_probe`, `ds41_vision_probe`) that this extension does not build yet;
-[QUALITY.md](../docs/models/deepseek-v4.1-flash/QUALITY.md) describes the checks.
+`dspark_reference.py` and `vision_reference.py` compare against dumps from the GPU
+probes; [QUALITY.md](../docs/models/deepseek-v4.1-flash/QUALITY.md) describes the checks.
+
+Gufo's development shell has PyTorch for the GPU, built against an older ROCm than the
+shell's own, whose variables make it crash at the first GPU operation. Clear them for the
+oracle:
+
+```sh
+nix develop github:gufo-org/gufo -c bash -c '
+  export LD_LIBRARY_PATH=$(echo "$LD_LIBRARY_PATH" | tr : "\n" | grep -v rocm-runtime | paste -sd:)
+  for v in $(env | grep -o "^\(HIP\|HSA\|ROCM\)[A-Z_]*"); do unset "$v"; done
+  python3 tools/ds41/reference.py run --model MODEL-00001-of-N.gguf --tokens "$(cat ids)" --score --output DIR'
+```
+
+A 3K-token score takes about 6 minutes and an 18.5K one 12.
+
+## Probes
+
+`probe/` holds the programs that run a model outside the server. Build them from a Gufo
+checkout configured as in [AGENTS.md](../AGENTS.md) (they are not part of `nix build`):
+
+```sh
+nix develop -c cmake --build build/ds41 --target deepseek41flash_probes
+```
+
+| Program | Use |
+| --- | --- |
+| `ds41_load_probe` | Memory plan; `--decode IDS [--batch] [--score] [--out DIR]` teacher-forced logits or scores; `--spec-check`, `--joint-check`, `--replay-check`, `--dspark-dump` exactness checks |
+| `ds41_mmq_bench` | Batched kernels on synthetic or recorded routes (`--f16 1 --counts FILE`, `--dense`) |
+| `ds41_gemv_bench` | Single-token GEMVs against their references |
+| `ds41_vision_probe` | Vision encoder dumps for `vision_reference.py` |
+
+A change that moves outputs is gated on the 3K teacher-forced logits of the build before
+and after it, batched and token by token:
+
+```sh
+ds41_load_probe MODEL --stream-experts --decode "$(cat ids)" --batch --out new-batch
+python3 tools/ds41/compare_logits.py ids base-batch new-batch
+```
 
 ## Kernel benchmarks
 

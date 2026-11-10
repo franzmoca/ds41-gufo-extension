@@ -546,7 +546,7 @@ __global__ __launch_bounds__(256) void routed_f16_kernel(
               const half16 a = __builtin_bit_cast(half16, __builtin_shufflevector(a0, a1, 0, 1, 2, 3, 4, 5, 6, 7));
 #pragma unroll
               for (int p = 0; p < 2; ++p)
-                acc[p][t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(a, b[p], acc[p][t]);
+                acc[p][t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(b[p], a, acc[p][t]);
             }
           }
         }
@@ -559,16 +559,21 @@ __global__ __launch_bounds__(256) void routed_f16_kernel(
     }
   }
 
-  /* Accumulator element e of a lane is (slot 2 e + lane / 16, row lane % 16). */
+  /* The weights are the product's first operand: accumulator element e of a
+   * lane is (weight row 2 e + lane / 16, slot lane % 16). Half 1 holds each
+   * K16 step with its groups swapped, so a value's sum order follows the
+   * parity of its weight row; with the slots there it followed the route's
+   * place in its expert's list, which changes with the batch (E114). */
 #pragma unroll
   for (int t = 0; t < 4; ++t) {
     if (t >= live) continue;
+    const int32_t slot = slot_of[t * 16 + lane % 16];
+    if (slot < 0) continue;
 #pragma unroll
     for (int e = 0; e < 8; ++e) {
-      const int32_t slot = slot_of[t * 16 + 2 * e + lane / 16];
-      if (slot < 0) continue;
+      const uint32_t r = r_wave + 2 * e + lane / 16;
       if constexpr (kPair) {
-        if (row[0] >= m) continue;
+        if (r >= m) continue;
         float g = finite_or_zero(acc[0][t][e]), u = finite_or_zero(acc[1][t][e]);
         if (limit > 1.0e-6f) {
           g = __builtin_fminf(g, limit);
@@ -576,13 +581,13 @@ __global__ __launch_bounds__(256) void routed_f16_kernel(
         }
         const float v = g / (1.0f + __builtin_amdgcn_exp2f(0x1.715476p+0f * -g)) * u * route_w[slot];
         if constexpr (kHalfOut)
-          static_cast<_Float16*>(y)[(uint64_t)slot * m + row[0]] = static_cast<_Float16>(v);
+          static_cast<_Float16*>(y)[(uint64_t)slot * m + r] = static_cast<_Float16>(v);
         else
-          static_cast<float*>(y)[(uint64_t)slot * m + row[0]] = v;
+          static_cast<float*>(y)[(uint64_t)slot * m + r] = v;
       } else {
 #pragma unroll
         for (int p = 0; p < 2; ++p)
-          if (row[p] < m) static_cast<float*>(y)[(uint64_t)slot * m + row[p]] = finite_or_zero(acc[p][t][e]);
+          if (r + 16 * p < m) static_cast<float*>(y)[(uint64_t)slot * m + r + 16 * p] = finite_or_zero(acc[p][t][e]);
       }
     }
   }

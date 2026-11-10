@@ -374,23 +374,28 @@ __global__ __launch_bounds__(kThreads) void dense_f16_kernel(const uint8_t* __re
           };
 #pragma unroll
           for (int t = 0; t < 8; ++t)
-            if (t < live) acc[t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(frag(t), b, acc[t]);
+            if (t < live) acc[t] = __builtin_amdgcn_wmma_f32_16x16x16_f16_w32(b, frag(t), acc[t]);
         }
       }
       ++g;
     }
   }
 
-  /* Accumulator element e of a lane is (token 2 e + lane / 16, row lane % 16). */
+  /* The weights are the product's first operand: accumulator element e of a
+   * lane is (row 2 e + lane / 16, token lane % 16). Half 1 holds each K16
+   * step with its groups swapped, so a value's sum order follows the parity
+   * of its weight row; with the tokens there it followed the token's place
+   * in the batch (E114). */
   const uint64_t out_stride = (uint64_t)groups * m;
+  const uint32_t row0 = row - lane % 16;
 #pragma unroll
   for (int t = 0; t < 8; ++t) {
     if (t >= live) continue;
+    const uint32_t token = t0 + t * 16 + lane % 16;
+    if (!kFull && token >= n) continue;
 #pragma unroll
-    for (int e = 0; e < 8; ++e) {
-      const uint32_t token = t0 + t * 16 + 2 * e + h;
-      if (kFull || token < n) out[token * out_stride + (uint64_t)z * m + row] = (Y)finite_or_zero(acc[t][e]);
-    }
+    for (int e = 0; e < 8; ++e)
+      out[token * out_stride + (uint64_t)z * m + row0 + 2 * e + h] = (Y)finite_or_zero(acc[t][e]);
   }
 }
 

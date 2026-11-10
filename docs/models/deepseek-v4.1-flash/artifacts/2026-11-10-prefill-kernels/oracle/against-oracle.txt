@@ -1,0 +1,9 @@
+run                          ppl   top-1     dNLL      se   |dNLL|  argmax
+oracle                     6.194  0.5862
+base-batch                 6.151  0.5895  -0.0069  0.0042   0.1305  0.9373
+new-batch                  6.201  0.5889  +0.0011  0.0042   0.1241  0.9340
+base-step                  6.156  0.5869  -0.0060  0.0046   0.1247  0.9403
+run                          ppl   top-1     dNLL      se   |dNLL|  argmax
+oracle                     5.708  0.6094
+base18-batch               5.698  0.6097  -0.0018  0.0014   0.1015  0.9478
+new18-batch                5.721  0.6101  +0.0023  0.0015   0.1028  0.9491

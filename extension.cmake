@@ -201,4 +201,24 @@ if(ENGINE_ENABLE_HIP)
     target_link_libraries(deepseek41flash_mmq_typed_test PRIVATE
       gufo_deepseek41flash_mmq)
   endif()
+
+  # Probes and kernel benchmarks: quality gates and measurements against a
+  # model (docs/models/deepseek-v4.1-flash/QUALITY.md). Built by
+  # `deepseek41flash_probes`, not by the default or test targets.
+  if(BUILD_TESTING AND NOT TARGET deepseek41flash_probes)
+    add_custom_target(deepseek41flash_probes)
+  endif()
+  foreach(name IN ITEMS load_probe mmq_bench gemv_bench vision_probe)
+    gufo_extension_target(
+      NAME deepseek41flash_${name}
+      SOURCES tools/probe/${name}.cpp
+      LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash
+                     gufo_deepseek41flash_mmq gufo_ext_hip gufo_ext_runtime
+    )
+    if(TARGET deepseek41flash_${name})
+      set_target_properties(deepseek41flash_${name} PROPERTIES
+        EXCLUDE_FROM_ALL TRUE OUTPUT_NAME ds41_${name})
+      add_dependencies(deepseek41flash_probes deepseek41flash_${name})
+    endif()
+  endforeach()
 endif()

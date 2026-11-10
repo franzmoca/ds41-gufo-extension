@@ -305,13 +305,20 @@ against an uncached prompt.
 
 ### 42. 4,096-token prefill batches for streamed builds
 
-`--prefill-batch 4096` is 3-8% faster on fresh 15-24K-token served prompts
-and keeps its prompt cache since E113, for 1.1-1.3 GiB less expert cache
-(AR decode within ±0.7%). It changes greedy replies after a 24K prompt
-(E113), so as a default it is an output change. Next: trace which batched
-path depends on the batch boundaries (compare logits of the same prompt at
-both sizes, first differing layer); if it can be made batch-independent,
-re-measure decode misses and DSpark with the smaller cache.
+`--prefill-batch 4096` is 3-8% faster on fresh 15-24K-token served prompts,
+keeps its prompt cache since E113 and gives the same logits as 2,048 since
+E114, for 1.1-1.3 GiB less expert cache (AR decode within ±0.7%). Next:
+DSpark decode and decode misses with the smaller cache, memory at four
+sessions, then the default.
+
+### 43. Dense FP16 kernel after the operand swap
+
+Since E114 `attn_q_b`, `attn_output_b`, `attn_output_a` and the shared
+down are 3-5% slower in `ds41_dense_f16_cache` (FP16 inputs; the FP32-input
+shapes are unchanged), with the same registers and occupancy. It is not
+the stores: turning each wave's results through LDS so that a lane stores
+one row again was bit-identical and no faster (E114). Next: compare the K
+loop's instruction stream before and after with `isa_mix.py`.
 
 ### 33. Attention partials written back during the dense GEMVs
 

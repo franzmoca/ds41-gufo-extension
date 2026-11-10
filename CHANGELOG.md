@@ -26,6 +26,12 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   leaves the server without a prompt cache
   ([E113](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e113--load-headroom-that-grows-with-the-prefill-batch-retained)).
 
+* **prefill:** the batched expert and dense projections give the same
+  result for a token whatever the batch size and wherever the batch starts;
+  `--prefill-batch 4096` now gives the same logits as 2048. Replies change
+  slightly against earlier builds
+  ([E114](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e114--fp16-prefill-kernels-sum-order-by-weight-row-retained)).
+
 ### Performance
 
 * **streaming:** the prompt cache keeps 16 transfer streams plus one per
