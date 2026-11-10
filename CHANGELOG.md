@@ -5,6 +5,13 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ## Unreleased
 
+### Dependencies
+
+* **Gufo:** pinned to `0e2de43e` (0.33.0), with disk prompt-cache fixes,
+  shared CPU sampling improvements and tool-call correctness fixes.
+  Draft-tuning CLI flags now warn and are ignored; DSpark uses the provider's
+  defaults.
+
 ### Features
 
 * **adapters:** `--adapter FILE` loads a direction adapter, which removes or adds
