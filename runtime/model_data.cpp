@@ -2133,7 +2133,8 @@ int ds41_engine_open(ds41_engine** out, const ds41_engine_options* opt) {
     }
 
     if (streaming) {
-      e->expert_store = ds41_expert_store_create(e->model, e->weights, opt->expert_cache_bytes);
+      e->expert_store = ds41_expert_store_create(e->model, e->weights, opt->expert_cache_bytes,
+                                                 e->prefill_batch);
       if (!e->expert_store) {
         fprintf(stderr, "ds41: failed to initialize the streamed expert store\n");
         ds41_engine_close(e);

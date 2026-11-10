@@ -1,5 +1,5 @@
 {
- "note": "streamed UD-IQ2_XXS, MXFP8 Engram, DSpark Q2K/Q4K drafter, vision, one session, fresh server per run; e108: base 706876f against the dense workgroup order; e109: base against both kernel changes, then --prefill-batch 4096 against 2048 on the new build. Replies are identical within each request across the runs of a group.",
+ "note": "streamed UD-IQ2_XXS, MXFP8 Engram, DSpark Q2K/Q4K drafter, vision, one session, fresh server per run; e108: base 706876f against the dense workgroup order; e109: base against both kernel changes, then --prefill-batch 4096 against 2048 on the new build. Replies are identical within each request across the runs of a group. e113: --prefill-batch 4096 against 2048 with the load headroom scaled by the batch; prefill runs with DSpark and vision, decode runs AR without a drafter.",
  "runs": {
   "e108-pf-base-1": {
    "order": 1,
@@ -959,6 +959,402 @@
      "generated": 1,
      "prompt_ms": 10970.7,
      "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    }
+   ]
+  },
+  "e113-pf4096-1": {
+   "order": 1,
+   "expert_cache_gib": 96.15,
+   "route_hits_pct": 95.78,
+   "mib_read_per_token": 4.79,
+   "backing_limited": 1,
+   "requests": [
+    {
+     "name": "warm",
+     "prompt_tokens": 7,
+     "generated": 4,
+     "prompt_ms": 434.4,
+     "predicted_ms": 130.7,
+     "draft_n": 2,
+     "draft_accepted": 2
+    },
+    {
+     "name": "p2k",
+     "prompt_tokens": 2287,
+     "generated": 1,
+     "prompt_ms": 2715.7,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p15k",
+     "prompt_tokens": 14144,
+     "generated": 1,
+     "prompt_ms": 13866.8,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p20k",
+     "prompt_tokens": 19916,
+     "generated": 1,
+     "prompt_ms": 17050.3,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p24k",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 20232.5,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "repeat",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 0,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "cont",
+     "prompt_tokens": 23949,
+     "generated": 1,
+     "prompt_ms": 256.7,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "half",
+     "prompt_tokens": 12287,
+     "generated": 1,
+     "prompt_ms": 2907.7,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    }
+   ]
+  },
+  "e113-pf2048-1": {
+   "order": 2,
+   "expert_cache_gib": 97.25,
+   "route_hits_pct": 96.59,
+   "mib_read_per_token": 5.94,
+   "backing_limited": 0,
+   "requests": [
+    {
+     "name": "warm",
+     "prompt_tokens": 7,
+     "generated": 4,
+     "prompt_ms": 432.3,
+     "predicted_ms": 128.1,
+     "draft_n": 2,
+     "draft_accepted": 2
+    },
+    {
+     "name": "p2k",
+     "prompt_tokens": 2287,
+     "generated": 1,
+     "prompt_ms": 2716.8,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p15k",
+     "prompt_tokens": 14144,
+     "generated": 1,
+     "prompt_ms": 14011.5,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p20k",
+     "prompt_tokens": 19916,
+     "generated": 1,
+     "prompt_ms": 18475.2,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p24k",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 21327.2,
+     "predicted_ms": 1.5,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "repeat",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 0,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "cont",
+     "prompt_tokens": 23949,
+     "generated": 1,
+     "prompt_ms": 268.7,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "half",
+     "prompt_tokens": 12287,
+     "generated": 1,
+     "prompt_ms": 2857.3,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    }
+   ]
+  },
+  "e113-pf2048-2": {
+   "order": 3,
+   "expert_cache_gib": 97.41,
+   "route_hits_pct": 96.57,
+   "mib_read_per_token": 5.93,
+   "backing_limited": 0,
+   "requests": [
+    {
+     "name": "warm",
+     "prompt_tokens": 7,
+     "generated": 4,
+     "prompt_ms": 437.8,
+     "predicted_ms": 129.3,
+     "draft_n": 2,
+     "draft_accepted": 2
+    },
+    {
+     "name": "p2k",
+     "prompt_tokens": 2287,
+     "generated": 1,
+     "prompt_ms": 2675.7,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p15k",
+     "prompt_tokens": 14144,
+     "generated": 1,
+     "prompt_ms": 13834.1,
+     "predicted_ms": 0.3,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p20k",
+     "prompt_tokens": 19916,
+     "generated": 1,
+     "prompt_ms": 18119.0,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p24k",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 21045.6,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "repeat",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 0,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "cont",
+     "prompt_tokens": 23949,
+     "generated": 1,
+     "prompt_ms": 252.1,
+     "predicted_ms": 0.1,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "half",
+     "prompt_tokens": 12287,
+     "generated": 1,
+     "prompt_ms": 2870.8,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    }
+   ]
+  },
+  "e113-pf4096-2": {
+   "order": 4,
+   "expert_cache_gib": 96.22,
+   "route_hits_pct": 95.86,
+   "mib_read_per_token": 4.77,
+   "backing_limited": 1,
+   "requests": [
+    {
+     "name": "warm",
+     "prompt_tokens": 7,
+     "generated": 4,
+     "prompt_ms": 447.4,
+     "predicted_ms": 131.5,
+     "draft_n": 2,
+     "draft_accepted": 2
+    },
+    {
+     "name": "p2k",
+     "prompt_tokens": 2287,
+     "generated": 1,
+     "prompt_ms": 2696.2,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p15k",
+     "prompt_tokens": 14144,
+     "generated": 1,
+     "prompt_ms": 13228.4,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p20k",
+     "prompt_tokens": 19916,
+     "generated": 1,
+     "prompt_ms": 16802.8,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "p24k",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 20568.8,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "repeat",
+     "prompt_tokens": 23943,
+     "generated": 1,
+     "prompt_ms": 0,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "cont",
+     "prompt_tokens": 23949,
+     "generated": 1,
+     "prompt_ms": 256.9,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "half",
+     "prompt_tokens": 12287,
+     "generated": 1,
+     "prompt_ms": 2860.3,
+     "predicted_ms": 0.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    }
+   ]
+  },
+  "e113-dec2048": {
+   "order": 5,
+   "expert_cache_gib": 102.03,
+   "route_hits_pct": 95.85,
+   "mib_read_per_token": 8.63,
+   "backing_limited": 0,
+   "requests": [
+    {
+     "name": "chat",
+     "prompt_tokens": 41,
+     "generated": 512,
+     "prompt_ms": 1065.9,
+     "predicted_ms": 29630.9,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "code",
+     "prompt_tokens": 3477,
+     "generated": 512,
+     "prompt_ms": 4963.1,
+     "predicted_ms": 28519.5,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "long",
+     "prompt_tokens": 23974,
+     "generated": 512,
+     "prompt_ms": 21795.5,
+     "predicted_ms": 30061.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    }
+   ]
+  },
+  "e113-dec4096": {
+   "order": 6,
+   "expert_cache_gib": 100.75,
+   "route_hits_pct": 95.14,
+   "mib_read_per_token": 7.82,
+   "backing_limited": 0,
+   "requests": [
+    {
+     "name": "chat",
+     "prompt_tokens": 41,
+     "generated": 512,
+     "prompt_ms": 1028.0,
+     "predicted_ms": 29712.8,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "code",
+     "prompt_tokens": 3477,
+     "generated": 512,
+     "prompt_ms": 5001.5,
+     "predicted_ms": 28563.2,
+     "draft_n": 0,
+     "draft_accepted": 0
+    },
+    {
+     "name": "long",
+     "prompt_tokens": 23974,
+     "generated": 512,
+     "prompt_ms": 20893.7,
+     "predicted_ms": 29848.5,
      "draft_n": 0,
      "draft_accepted": 0
     }
