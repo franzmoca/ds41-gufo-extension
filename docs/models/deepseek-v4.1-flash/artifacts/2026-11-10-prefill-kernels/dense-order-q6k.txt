@@ -1,0 +1,20 @@
+q_b        32768x1280  g1 W  34.4 MB X   5.2 MB: row block 0.26 MiB, token tile 0.31 MiB, 128 x 16 workgroups per group
+   rows/chunk 128 ( 32.8 MiB):  x1   5.76 ms  x2   5.77 ms  x4   5.79 ms  x8   5.79 ms  x16  5.79 ms
+   rows/chunk  32 (  8.2 MiB):  x1   5.79 ms  x2   5.57 ms  x4   5.34 ms  x8   5.21 ms  x16  5.09 ms
+   rows/chunk  16 (  4.1 MiB):  x1   5.79 ms  x2   5.56 ms  x4   5.32 ms  x8   5.16 ms  x16  5.07 ms
+   rows/chunk   8 (  2.1 MiB):  x1   5.77 ms  x2   5.38 ms  x4   5.25 ms  x8   5.20 ms  x16  5.07 ms
+   rows/chunk   5 (  1.3 MiB):  x1   5.78 ms  x2   5.76 ms  x4   5.89 ms  x8   5.47 ms  x16  5.32 ms
+   rows/chunk   4 (  1.0 MiB):  x1   5.78 ms  x2   5.50 ms  x4   5.24 ms  x8   5.15 ms  x16  5.14 ms
+   rows/chunk   2 (  0.5 MiB):  x1   5.78 ms  x2   5.64 ms  x4   5.39 ms  x8   5.37 ms  x16  5.15 ms
+   rows/chunk   1 (  0.3 MiB):  x1   5.77 ms  x2   5.66 ms  x4   5.76 ms  x8   6.05 ms  x16  6.32 ms
+   production (19 rows x 16 tiles):  5.07 ms, hash 522abd24010da383
+engram     25600x6144  g1 W 129.0 MB X  50.3 MB: row block 1.23 MiB, token tile 3.00 MiB, 100 x 16 workgroups per group
+   rows/chunk 100 (123.0 MiB):  x1  21.19 ms  x2  21.21 ms  x4  21.29 ms  x8  21.12 ms  x16 21.24 ms
+   rows/chunk  32 ( 39.4 MiB):  x1  21.26 ms  x2  23.44 ms  x4  23.52 ms  x8  23.51 ms  x16 23.53 ms
+   rows/chunk  16 ( 19.7 MiB):  x1  21.31 ms  x2  19.77 ms  x4  25.01 ms  x8  25.77 ms  x16 25.99 ms
+   rows/chunk   8 (  9.8 MiB):  x1  21.20 ms  x2  19.34 ms  x4  20.28 ms  x8  26.32 ms  x16 26.73 ms
+   rows/chunk   5 (  6.2 MiB):  x1  21.20 ms  x2  19.50 ms  x4  19.29 ms  x8  29.06 ms  x16 29.59 ms
+   rows/chunk   4 (  4.9 MiB):  x1  21.20 ms  x2  19.18 ms  x4  18.55 ms  x8  26.80 ms  x16 29.59 ms
+   rows/chunk   2 (  2.5 MiB):  x1  21.30 ms  x2  19.37 ms  x4  19.13 ms  x8  19.16 ms  x16 34.95 ms
+   rows/chunk   1 (  1.2 MiB):  x1  21.23 ms  x2  19.38 ms  x4  19.46 ms  x8  19.51 ms  x16 44.98 ms
+   production (4 rows x 4 tiles): 18.58 ms, hash ca933cf2fbc50383

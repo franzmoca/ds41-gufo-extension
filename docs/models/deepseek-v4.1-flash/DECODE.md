@@ -348,6 +348,10 @@ rounding bar (E90). Partial writebacks after split attention cost ~0.6 ms
 per token (E65, [item 33](BACKLOG.md#33-attention-partials-written-back-during-the-dense-gemvs));
 routed GEMVs are [item 17](BACKLOG.md#17-single-row-routed-expert-gemv-bandwidth).
 Retained already: E46, E51, E69; nontemporal loads did not help (E59, E65).
+Workgroups striding over the row tiles change nothing (E110): at decode
+sizes a plain read with the GEMV's per-workgroup spans reaches 217-226
+GB/s, so the kernels are within a few GB/s of what their access pattern
+allows.
 
 ### 6. Launch gaps (~2.9 ms/token traced)
 

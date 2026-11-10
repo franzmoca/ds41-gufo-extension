@@ -25,6 +25,7 @@
  * copy). */
 #include <hip/hip_runtime.h>
 
+#include <algorithm>
 #include <cstdint>
 
 #include "ds41_v41.h"
@@ -255,12 +256,26 @@ __global__ __launch_bounds__(kThreads) void dense_f16_kernel(const uint8_t* __re
                                                              Y* __restrict__ out, uint32_t m, uint32_t n, uint32_t k,
                                                              uint32_t groups, uint32_t tile0,
                                                              const uint8_t* __restrict__ w2, Y* __restrict__ out2,
-                                                             uint32_t m2) {
+                                                             uint32_t m2, uint32_t row_blocks, uint32_t tiles,
+                                                             uint32_t chunk_rows, uint32_t chunk_tiles) {
   __shared__ __attribute__((aligned(16))) _Float16 act[2][kTile * kPitch];
   const int tid = threadIdx.x, wave = tid / 32, lane = tid % 32, h = lane / 16;
-  const uint32_t z = blockIdx.z;
   const uint64_t row_bytes = (uint64_t)k / 256 * F::kBlockBytes;
-  uint32_t block = blockIdx.x;
+  /* Workgroups run in index order: group, then chunks of chunk_tiles token
+   * tiles, chunks of chunk_rows row blocks, tiles, row blocks. */
+  const uint32_t per_group = row_blocks * tiles;
+  const uint32_t z = blockIdx.x / per_group;
+  uint32_t index = blockIdx.x - z * per_group;
+  const uint32_t tile_chunk = index / (row_blocks * chunk_tiles);
+  index -= tile_chunk * row_blocks * chunk_tiles;
+  const uint32_t tiles_here =
+      min(chunk_tiles, tiles - tile_chunk * chunk_tiles);
+  const uint32_t row_chunk = index / (chunk_rows * tiles_here);
+  index -= row_chunk * chunk_rows * tiles_here;
+  const uint32_t rows_here =
+      min(chunk_rows, row_blocks - row_chunk * chunk_rows);
+  const uint32_t tile = tile_chunk * chunk_tiles + index / rows_here;
+  uint32_t block = row_chunk * chunk_rows + index % rows_here;
   if (block * kRows >= m) {
     block -= m / kRows;
     w = w2;
@@ -269,7 +284,7 @@ __global__ __launch_bounds__(kThreads) void dense_f16_kernel(const uint8_t* __re
   }
   const uint32_t row = block * kRows + wave * 16 + lane % 16;
   const uint8_t* wr = w + ((uint64_t)z * m + row) * row_bytes;
-  const uint32_t t0 = (tile0 + blockIdx.y) * kTile;
+  const uint32_t t0 = (tile0 + tile) * kTile;
   /* Live 16-token tiles; a runtime count even for full tiles, since a
    * constant one makes the compiler hoist every fragment load and spill. */
   const uint32_t rows16 = (n - t0 + 15) / 16;
@@ -390,40 +405,87 @@ struct DenseArgs {
   uint32_t m2;
 };
 
+/* The order of a launch's workgroups (dense_f16_kernel): chunks of `tiles`
+ * token tiles, and inside each, chunks of `rows` row blocks. */
+struct DenseChunks {
+  uint32_t rows, tiles;
+};
+
+/* gfx1151 reads its 32 MiB last-level cache about four times faster than
+ * DRAM (tools/bench/ds41_dense_f16_cache.hip). A batch sweeps the weights
+ * once per token tile, so a matrix larger than the cache is taken in row
+ * chunks that stay cached across the tiles, each with the activations it
+ * rereads: all of them when they are small and a chunk holds eight row
+ * blocks (attn_q_b), a few tiles for a matrix of several caches (the Engram
+ * projection). Matrices that fit, and attn_output_b, whose activations are
+ * as large as its weights, were slower in every chunking and keep one row
+ * chunk per tile. The order does not change any result. */
+DenseChunks dense_chunks(uint64_t block_bytes, uint64_t tile_bytes,
+                         uint32_t blocks, uint32_t tiles) {
+  constexpr uint64_t kCache = 32ull << 20, kRowChunk = 5ull << 20,
+                     kTileChunk = 12ull << 20;
+  const uint64_t weights = block_bytes * blocks;
+  const auto fit = [](uint64_t budget, uint64_t unit, uint32_t count) {
+    return (uint32_t)std::min<uint64_t>(count,
+                                        std::max<uint64_t>(1, budget / unit));
+  };
+  if (weights <= kCache)
+    return {blocks, 1};
+  if (tile_bytes * tiles <= kCache / 4 && block_bytes * 8 <= kRowChunk)
+    return {fit(kRowChunk, block_bytes, blocks), tiles};
+  if (weights >= 2 * kCache)
+    return {fit(kRowChunk, block_bytes, blocks),
+            fit(kTileChunk, tile_bytes, tiles)};
+  return {blocks, 1};
+}
+
 template <typename F, typename X, typename Y>
-int dense_launch(const DenseArgs& a) {
+int dense_launch(const DenseArgs& a, const DenseChunks* order) {
   const auto* xt = static_cast<const X*>(a.x);
   auto* yt = static_cast<Y*>(a.out);
   auto* y2 = static_cast<Y*>(a.out2);
   const uint32_t full = a.n / kTile, blocks = (a.m + a.m2) / kRows;
-  if (full)
-    dense_f16_kernel<F, true, X, Y><<<dim3(blocks, full, a.groups), kThreads>>>(a.w, xt, yt, a.m, a.n, a.k, a.groups,
-                                                                                 0, a.w2, y2, a.m2);
+  if (full) {
+    const uint64_t row_bytes = (uint64_t)a.k / 256 * F::kBlockBytes;
+    const DenseChunks c =
+        order ? *order
+              : dense_chunks(kRows * row_bytes,
+                             (uint64_t)kTile * a.k * sizeof(X), blocks, full);
+    dense_f16_kernel<F, true, X, Y>
+        <<<dim3(blocks * full * a.groups), kThreads>>>(
+            a.w, xt, yt, a.m, a.n, a.k, a.groups, 0, a.w2, y2, a.m2, blocks,
+            full, std::min(c.rows, blocks), std::min(c.tiles, full));
+  }
   if (a.n % kTile)
-    dense_f16_kernel<F, false, X, Y><<<dim3(blocks, 1, a.groups), kThreads>>>(a.w, xt, yt, a.m, a.n, a.k, a.groups,
-                                                                              full, a.w2, y2, a.m2);
+    dense_f16_kernel<F, false, X, Y><<<dim3(blocks * a.groups), kThreads>>>(
+        a.w, xt, yt, a.m, a.n, a.k, a.groups, full, a.w2, y2, a.m2, blocks, 1,
+        blocks, 1);
   return hipGetLastError() == hipSuccess ? 0 : 1;
 }
 
 template <typename F>
-int dense_io(const DenseArgs& a, uint32_t io) {
+int dense_io(const DenseArgs& a, uint32_t io, const DenseChunks* order) {
   switch (io) {
   case 0:
-    return dense_launch<F, float, float>(a);
+    return dense_launch<F, float, float>(a, order);
   case DS41_V41_DENSE_X_HALF:
-    return dense_launch<F, _Float16, float>(a);
+    return dense_launch<F, _Float16, float>(a, order);
   case DS41_V41_DENSE_OUT_HALF:
-    return dense_launch<F, float, _Float16>(a);
+    return dense_launch<F, float, _Float16>(a, order);
   default:
-    return dense_launch<F, _Float16, _Float16>(a);
+    return dense_launch<F, _Float16, _Float16>(a, order);
   }
 }
 
-int dense_run(int type, const DenseArgs& a, uint32_t io) {
+/* `order` replaces dense_chunks' choice (benchmarks). */
+int dense_run(int type, const DenseArgs& a, uint32_t io,
+              const DenseChunks* order = nullptr) {
   if ((type != 8 && type != 13 && type != 14) || a.m % kRows != 0 || a.m2 % kRows != 0 || a.k % 256 != 0 ||
       a.n == 0 || a.groups == 0 || (a.m2 && a.groups != 1) || (io & ~(DS41_V41_DENSE_X_HALF | DS41_V41_DENSE_OUT_HALF)))
     return 1;
-  return type == 8 ? dense_io<Q8>(a, io) : type == 13 ? dense_io<Q5K>(a, io) : dense_io<Q6K>(a, io);
+  return type == 8    ? dense_io<Q8>(a, io, order)
+         : type == 13 ? dense_io<Q5K>(a, io, order)
+                      : dense_io<Q6K>(a, io, order);
 }
 
 }  // namespace

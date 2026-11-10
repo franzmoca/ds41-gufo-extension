@@ -1,0 +1,18 @@
+before (706876f)
+router        384 x 5120, 2048 tokens:   1155.8 us   6.97 TFLOP/s (one pass)  hash ba81ee9193191ef5
+router        384 x 5120, 1100 tokens:    573.6 us   7.54 TFLOP/s (one pass)  hash 64b0b6307f2c9376
+router        384 x 5120,  140 tokens:    130.1 us   4.23 TFLOP/s (one pass)  hash 5a2b14b8b423b44c
+router        384 x 5120,   64 tokens:     77.0 us   3.27 TFLOP/s (one pass)  hash 5b0d5d536d7cf1f5
+router        384 x 5120,   20 tokens:     60.8 us   1.29 TFLOP/s (one pass)  hash 6b06e46beae95945
+compressor    512 x 5120, 2048 tokens:   1440.6 us   7.45 TFLOP/s (one pass)  hash d3637568b4368748
+indexer q_b  4096 x 1280, 2048 tokens:   2619.2 us   8.20 TFLOP/s (one pass)  hash 0c8725b616648955
+indexer q_b  4096 x 1280,  140 tokens:    293.3 us   5.01 TFLOP/s (one pass)  hash 4e5ec24276d7b7a8
+after
+router        384 x 5120, 2048 tokens:    909.2 us   8.86 TFLOP/s (one pass)  hash ba81ee9193191ef5
+router        384 x 5120, 1100 tokens:    585.4 us   7.39 TFLOP/s (one pass)  hash 64b0b6307f2c9376
+router        384 x 5120,  140 tokens:     93.3 us   5.90 TFLOP/s (one pass)  hash 5a2b14b8b423b44c
+router        384 x 5120,   64 tokens:     49.0 us   5.14 TFLOP/s (one pass)  hash 5b0d5d536d7cf1f5
+router        384 x 5120,   20 tokens:     42.3 us   1.86 TFLOP/s (one pass)  hash 6b06e46beae95945
+compressor    512 x 5120, 2048 tokens:   1093.7 us   9.82 TFLOP/s (one pass)  hash d3637568b4368748
+indexer q_b  4096 x 1280, 2048 tokens:   2140.9 us  10.03 TFLOP/s (one pass)  hash 0c8725b616648955
+indexer q_b  4096 x 1280,  140 tokens:    251.7 us   5.83 TFLOP/s (one pass)  hash 4e5ec24276d7b7a8

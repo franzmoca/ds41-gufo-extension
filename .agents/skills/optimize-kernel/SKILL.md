@@ -69,6 +69,10 @@ machine, time and Git instructions.
 - **Bandwidth and cache:** the 32 MiB MALL can make repeatedly reused small
   matrices look unrealistically fast: rotate weights beyond cache capacity or
   reproduce full-model traffic.
+  The same cache is a lever: a batched kernel that sweeps a matrix once per
+  token tile can order its workgroups so a chunk of rows stays cached
+  (E108). An LDS read costs about 30 vector instructions and a matrix-core
+  product about 60; count operand reads per product (E109).
 - **GEMV:** coalesce packed weight loads, stage shared activations in LDS,
   fuse reads where useful, and preserve each dot product's accumulation order.
   More fusion can increase VGPR pressure and spills. Integer WMMA helped wider
