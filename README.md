@@ -299,9 +299,12 @@ leaves about 2 GiB free.
 
 ## Known limitations
 
-- Resident `IQ1_M` with vision keeps no prompt-cache checkpoints. A conversation
-  that continues still reuses its session, but repeats, edits and branches of
-  earlier prompts prefill again. Stream it instead.
+- Resident `IQ1_M` with DSpark or vision keeps no prompt-cache checkpoints: the
+  device heap they leave is under the 4 GiB that Gufo's cache keeps free. A
+  conversation that continues still reuses its session, but repeats, edits and
+  branches of earlier prompts prefill again, and concurrent sessions cannot be
+  prepared from a shared prefix (the multi-user DSpark benchmark does not run).
+  Stream it instead.
 - `UD-IQ1_S` and `IQ2_XS` have not been run.
 
 ## Documentation

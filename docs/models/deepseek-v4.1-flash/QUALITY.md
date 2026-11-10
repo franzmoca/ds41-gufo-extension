@@ -567,6 +567,38 @@ generated on this build (`multi-mixed-udiq2xxs-gufo-ar.json`,
 - Multiple users: every AR and DSpark cohort, C1–C8, mixed and repetitive,
   matches its isolated C1 reference (30 of 30).
 
+### Extension refresh (2026-11-10)
+
+The `IQ1_M` and `UD-IQ2_XXS` single-user AR and DSpark tables, both
+multi-user AR tables and the `UD-IQ2_XXS` multi-user DSpark table were
+measured on the production `nix build` of the extension at `255e1739` with
+Gufo `0e2de43e` (binary SHA-256 `36db5366…`), using the fork's driver with
+prompt-lookup copies counted as speculative tokens. The files were the same as
+before: GSQ-RCO `IQ1_M` resident, Unsloth `UD-IQ2_XXS` with `--stream-experts`
+from the Samsung 990 PRO, the ISTA `IQ4_NL` Engram as shard 6 for both, and the
+Lucebox Q2_K/Q4_K drafter. Tuned profile `accelerator-performance`, GPU DPM
+level `auto`, Tctl 37.5 °C at the start of the sweep and 46.5 °C before the
+`UD-IQ2_XXS` multi-user DSpark run.
+
+This build's greedy output differs from the November 2 build's, so the
+`UD-IQ2_XXS` isolated C1 AR references (`multi-mixed-udiq2xxs-gufo-ar.json`,
+`multi-repetition-udiq2xxs-gufo-ar.json`) were regenerated first. The mixed
+reference equals the single-user d0 AR completion.
+
+- Single user: the greedy DSpark completion equals the AR completion at
+  all eight depths of both variants (16 of 16 hashes).
+- Multiple users: every AR request, C1–C8, matches its isolated C1 (21 of 21
+  per variant), and every `UD-IQ2_XXS` DSpark request, mixed and repetitive,
+  matches its isolated AR reference (42 of 42).
+
+The resident `IQ1_M` multi-user DSpark table could not run. With the drafter
+loaded, 2.2–2.6 GB of device heap is free, which is under the 4 GiB that Gufo
+keeps free before it commits prompt-cache backing. The cache therefore holds no
+checkpoint, and C1 could not prepare its sessions from one
+([EXTENSION-PLAN](EXTENSION-PLAN.md) U4). Its rows remain the fork's of
+October 31. On `UD-IQ2_XXS` the gate stops the backing at the 2.2 GB committed
+at startup, below its 3.2 GB budget; no capture was refused in these runs.
+
 ## Streamed UD-IQ2_XXS
 
 Unsloth's `UD-IQ2_XXS` (165.3 GB backbone in five shards, the shared
