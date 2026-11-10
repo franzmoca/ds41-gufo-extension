@@ -1,0 +1,20 @@
+diff --git a/tools/gufo/serving_bench.py b/tools/gufo/serving_bench.py
+index 026b1e96..a7dd6857 100644
+--- a/tools/gufo/serving_bench.py
++++ b/tools/gufo/serving_bench.py
+@@ -536,6 +536,15 @@ def run_request(
+     else:
+         metrics_source = "none"
+         prefill_tokens = prompt_tokens - cached_prompt_tokens
++    if timings is not None:
++        # Prompt-lookup copies are verified like drafts but reported apart
++        # (timings only, on either metrics path); count both.
++        lookup_tokens = _optional_integer(timings, "lookup_n", 0)
++        lookup_accepted_tokens = _optional_integer(timings, "lookup_n_accepted", 0)
++        if lookup_accepted_tokens > lookup_tokens:
++            raise RuntimeError("timings has invalid lookup token counts")
++        draft_tokens += lookup_tokens
++        draft_accepted_tokens += lookup_accepted_tokens
+ 
+     wall_ms = (finished_at - started_at) * 1000.0
+     client_ttft_ms = (

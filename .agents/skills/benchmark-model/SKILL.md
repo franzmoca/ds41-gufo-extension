@@ -48,6 +48,7 @@ git -C /path/to/gufo-fork worktree add /tmp/ds41-bench ab0de16d
 cd /tmp/ds41-bench
 rm -r docs/models/deepseek-v4.1-flash
 ln -s $EXT/docs/models/deepseek-v4.1-flash docs/models/deepseek-v4.1-flash
+git apply $EXT/.agents/skills/benchmark-model/model-bench-lookup.patch
 B="nix develop -c python3 tools/bench/model-bench.py --model deepseek-v4.1-flash --gufo $EXT/result/bin/gufo"
 $B tables                                   # table ids and existing artifacts
 $B render --check                           # must say "up to date" before a refresh
@@ -57,8 +58,18 @@ $B --gguf udiq2xxs=/models/UD-IQ2_XXS/DeepSeek-V4.1-Flash-1017-UD-IQ2_XXS-00001-
 $B render
 ```
 
-Restore the fork worktree's own directory when done
-(`git checkout -- docs/models/deepseek-v4.1-flash`).
+When done, restore the fork worktree's own directory and driver
+(`git checkout -- docs/models/deepseek-v4.1-flash tools`).
+
+`model-bench-lookup.patch` adds the server's prompt-lookup counts (`lookup_n`,
+`lookup_n_accepted`) to the driver's draft counts; without it the repetition
+rows record an `accepted_per_step` near zero.
+
+`multi-dspark` compares each completion with an isolated AR run stored in
+`multi-{mixed,repetition}[-<variant>]-gufo-ar.json`, which no table writes.
+When the build's greedy output has changed, refresh that reference first: run
+the table with a `--config` copy of `bench.json` whose `multi-dspark` has
+`"modes": ["ar"]` and `"concurrency": [1]`, then run it normally.
 
 `artifacts/bench.json` declares the variants: `default` (`IQ1_M`, resident),
 `iq2xxs`, `udiq1m` and `udiq2xxs` (each with `--stream-experts`). `--gguf`
