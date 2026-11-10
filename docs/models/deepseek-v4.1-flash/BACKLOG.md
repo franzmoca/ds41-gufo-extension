@@ -32,7 +32,7 @@ follow in their own sections.
 
 | Rank | # | Item | Expected gain (evidence) | Next step |
 | ---: | ---: | --- | --- | --- |
-| 1 | 30 | More memory for the expert cache | Replays: +3.7 GiB −28% decode misses; the decoder replay's cold experts (0.91 s) are capacity-bound (E86). E93 gave one session +1.9 GiB, the 64-row demand stage +3.8 GiB (E119: decode −1.1 to −1.6%) | Every admitted miss straight into its slot; the 2 GiB headroom |
+| 1 | 30 | More memory for the expert cache | Replays: +3.7 GiB −28% decode misses; the decoder replay's cold experts (0.91 s) are capacity-bound (E86). E93 gave one session +1.9 GiB, the 64-row demand stage +3.8 GiB (E119: decode −1.1 to −1.6%) | The 2 GiB headroom (swap bursts first) |
 | 2 | 37 | Cheap prefetch adoption, then every-layer decode prediction | +2.3-2.8% decode simulated once adoption is free (E89); Belady would halve decode misses (E92) | Stop resolving a running job on hit layers |
 | 3 | 31 | Eviction scoring and prompt admission | Frequency classes retained (E105); admitting every expert routed twice cut follow-up misses 32% but slowed prefill | Re-measure admission after direct-to-slot uploads |
 | 4 | 9 | Stable-boundary prefill pass per chat request | 64.6 ms per chat request (measured pass cost) | Snapshot or skip the N−3 capture |
@@ -70,10 +70,9 @@ the decoder replay's drive-bound stall (E86). Replay data:
   longer swap. Context depth costs little (~0.06 GiB from 20K to 110K).
   Open: what is left of the 2 GiB headroom is ~1.5 GiB at the floor; a
   smaller margin needs the swap bursts below explained first.
-- **Admitted misses straight into their slot**: take the slot before the
-  read, never evicting an expert the batch routes (replay −0.16% misses);
-  removes one copy and frees the demand stage for the next part. Item 31's
-  admission waits on it.
+- **Admitted misses straight into their slot** (rejected, E120): removes
+  the stage-to-slot copy, but decode got 1.2-1.8% slower with the same
+  misses. Only batches with more misses than stage rows do it (E119).
 - **Compact demand stage** (done, E119): 64 rows; a batch with more misses
   reads admitted experts into their slots and lends slots to the rest.
   +3.8 GiB of cache, decode −1.1 to −1.6%, prefill −2.4 to −2.7%.

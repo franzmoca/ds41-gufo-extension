@@ -153,6 +153,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E117](#e117--sampled-draft-width-from-the-proposal-concentration-rejected) | DSpark policy | rejected | Sampled cycles verified at full width and replayed offline: no prefix rule over q's top probability or a point mass's raw concentration beats the 0.6 cut by more than 0.2%; knowing the accepted prefix would give −20% (chat/code/long) and −11% (agent). |
 | [E118](#e118--json-constraint-masks-computed-ahead-of-the-selection-rejected) | sampling, tools | rejected | Tool-call cycles spend ~4% of agent decode on the host (mask misses 3-10 ms, constrained draws ~0.8 ms per row). Walking the proposals' grammar states during the evaluation: 162.2 against 161.6 s per replay; a 1,024-entry mask cache: 158.7 against 157.1 s. |
 | [E119](#e119--a-64-row-demand-stage-misses-past-it-read-into-cache-slots-retained) | expert cache | retained | The whole-layer demand stage (3.7 GiB) becomes 64 rows; a batch with more misses reads the experts it admits into their slots and lends slots to the rest. Expert cache 97.2 → 101.0 GiB: replies at server defaults decode −1.6%, prefill −2.4%; agent replay decode −1.1% (base runs 1.9% apart), prefill −2.7%, 16% fewer MiB read per token. Outputs identical. |
+| [E120](#e120--every-admitted-miss-read-straight-into-its-slot-rejected) | expert cache | rejected | Reading every admitted miss into its slot, not only a batch's misses past the 64 stage rows, removes the stage-to-slot copy but slows decode: replies +1.2%, agent replay +1.8%, prefill unchanged. Outputs identical. |
 
 ## Milestones
 
@@ -4512,6 +4513,29 @@ tokens and drafted / accepted counts (3,732 / 3,099; 1,403 / 822) match in
 every run. The agent decode gain is within the spread of its two base runs;
 its prefill gain and the replies' gains are not. Retained.
 [Runs](artifacts/2026-11-10-compact-demand-stage/runs.json).
+
+## E120 — every admitted miss read straight into its slot (rejected)
+
+After E119 only a batch with more misses than stage rows reads admitted
+experts into their slots. Doing so for every batch removes the
+stage-to-slot copy of each decode miss (~9 MiB per expert) and leaves the
+stage to the experts a batch does not admit. Same setup and order as E119,
+against the E119 build:
+
+| | E119 | Candidate | Change |
+| --- | ---: | ---: | ---: |
+| Chat/code/long replies, decode | 64.99 / 64.99 s | 65.72 / 65.84 s | +1.2% |
+| Their prefill | 27.86 / 27.65 s | 27.67 / 27.69 s | −0.3% |
+| Agent replay, decode | 158.36 / 159.10 s | 162.29 / 160.96 s | +1.8% |
+| Its prefill | 35.02 / 35.11 s | 35.08 / 35.06 s | 0.0% |
+
+Replies (chat/code/long, also greedy), tokens and drafted / accepted
+counts match; route hits and MiB read per token are the same in both
+builds, so the loss is in how the misses are read, not in what is cached.
+Not profiled: a slot read is three per-expert reads, without the stage's
+merging of experts adjacent in the file, and lands in the cache's managed
+chunks instead of the stage's device allocation (zero-copy reads lost the
+same way, item 29). Not retained.
 
 ## Backlog measurements without an E-number
 
