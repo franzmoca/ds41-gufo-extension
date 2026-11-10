@@ -305,11 +305,12 @@ against an uncached prompt.
 
 ### 42. 4,096-token prefill batches for streamed builds
 
-`--prefill-batch 4096` is 3-8% faster on fresh 15-24K-token served prompts,
-keeps its prompt cache since E113 and gives the same logits as 2,048 since
-E114, for 1.1-1.3 GiB less expert cache (AR decode within ±0.7%). Next:
-DSpark decode and decode misses with the smaller cache, memory at four
-sessions, then the default.
+`--prefill-batch 4096` keeps its prompt cache (E113) and gives the logits
+of 2,048 (E114), and is 5-7% faster on fresh 14-24K-token prompts, but as
+the streamed default it slowed a 2.3K prompt by 3% and decode by 0.2-2.1%
+through 1.2-1.7 GiB less expert cache (E115): an option. It becomes a
+default candidate again if the batch scratch stops costing cache, e.g.
+allocated for the first long prompt and returned after it.
 
 ### 43. Dense FP16 kernel after the operand swap
 
