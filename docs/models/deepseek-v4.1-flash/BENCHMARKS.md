@@ -7,10 +7,14 @@ streamed routed experts (second table, after the rule); Unsloth `UD-IQ1_M`
 sharing the ISTA Engram file;
 `IQ4_NL` Engram tables read from disk, Lucebox Q2_K/Q4_K DSpark drafter. Gufo only: no other
 engine runs DeepSeek V4.1 Flash on this machine, so the tables carry no
-reference columns. HTTP through `gufo serve`, greedy, thinking off; measured
-October 31, 2026 on the production `nix build` of `0eb9e89c` (`UD-IQ2_XXS`
-tables and the loading table: November 2-3 on `26c7598f`), tuned profile
-`accelerator-performance`, GPU DPM level `auto`, Tctl 45–58 °C at the start of
+reference columns. HTTP through `gufo serve`, greedy, thinking off. The
+`IQ1_M` and `UD-IQ2_XXS` single-user tables, their multi-user AR tables and
+the `UD-IQ2_XXS` multi-user DSpark table were measured November 10, 2026 on
+the production `nix build` of the extension at `255e1739` with Gufo
+`0e2de43e`. The other tables come from the DeepSeek fork: October 31 on
+`0eb9e89c`, and the loading and `UD-IQ2_XXS` memory tables November 2-3 on
+`26c7598f`. Tuned profile
+`accelerator-performance`, GPU DPM level `auto`, Tctl 37–58 °C at the start of
 each run. Prefill rates
 are the server's own prompt timings for real chat text; see
 [native prefill](#native-prefill) for `gufo bench`.
@@ -33,14 +37,14 @@ pp2048 / tg128; depth is the cached prefix in tokens.
 <!-- bench:single-ar -->
 | DS4.1 Flash IQ1_M AR<br>Depth (tokens) | Gufo pp (tok/s) | Gufo tg (tok/s) |
 | ---: | ---: | ---: |
-| 0 | 1243.84 | 24.71 |
-| 4,096 | 1237.13 | 24.49 |
-| 8,192 | 1121.83 | 24.45 |
-| 12,288 | 1217.04 | 24.31 |
-| 16,384 | 1180.66 | 24.29 |
-| 32,768 | 1194.97 | 24.22 |
-| 65,536 | 1067.57 | 23.80 |
-| 131,072 | 1055.97 | 23.31 |
+| 0 | 1250.35 | 24.88 |
+| 4,096 | 1166.25 | 24.76 |
+| 8,192 | 1204.50 | 24.66 |
+| 12,288 | 1209.08 | 24.62 |
+| 16,384 | 1170.65 | 24.53 |
+| 32,768 | 1195.28 | 24.40 |
+| 65,536 | 1101.88 | 24.10 |
+| 131,072 | 1050.85 | 23.50 |
 <!-- /bench -->
 
 ![Single user, autoregressive](artifacts/charts/single-ar.svg)
@@ -84,14 +88,14 @@ pp2048 / tg128; depth is the cached prefix in tokens.
 <!-- bench:single-ar-udiq2xxs -->
 | DS4.1 Flash UD-IQ2_XXS streamed AR<br>Depth (tokens) | Gufo pp (tok/s) | Gufo tg (tok/s) |
 | ---: | ---: | ---: |
-| 0 | 964.54 | 16.80 |
-| 4,096 | 1015.62 | 18.10 |
-| 8,192 | 1032.84 | 18.68 |
-| 12,288 | 1036.53 | 18.65 |
-| 16,384 | 978.15 | 18.74 |
-| 32,768 | 988.06 | 18.81 |
-| 65,536 | 770.45 | 16.90 |
-| 131,072 | 732.04 | 18.17 |
+| 0 | 1019.95 | 17.29 |
+| 4,096 | 1053.71 | 18.35 |
+| 8,192 | 1067.24 | 18.52 |
+| 12,288 | 1082.83 | 18.56 |
+| 16,384 | 1035.23 | 19.07 |
+| 32,768 | 1046.99 | 18.92 |
+| 65,536 | 943.26 | 17.36 |
+| 131,072 | 970.20 | 18.49 |
 <!-- /bench -->
 
 ![Single user, autoregressive](artifacts/charts/single-ar-udiq2xxs.svg)
@@ -107,14 +111,14 @@ which prompt lookup verifies up to 15 tokens at a time. Greedy output is identic
 <!-- bench:single-dspark -->
 | DS4.1 Flash IQ1_M DSpark<br>Depth (tokens) | Gufo pp (tok/s) | Gufo tg mixed (tok/s) | Gufo tg repetitive (tok/s) |
 | ---: | ---: | ---: | ---: |
-| 0 | 1219.56 | 31.06 | 73.35 |
-| 4,096 | 1173.64 | 30.92 | 72.37 |
-| 8,192 | 1199.46 | 31.30 | 73.64 |
-| 12,288 | 1170.10 | 30.97 | 74.03 |
-| 16,384 | 1167.47 | 32.74 | 70.33 |
-| 32,768 | 979.26 | 29.09 | 59.14 |
-| 65,536 | 951.98 | 26.88 | 67.40 |
-| 131,072 | 949.43 | 27.86 | 63.95 |
+| 0 | 1240.34 | 30.99 | 75.36 |
+| 4,096 | 1212.48 | 31.19 | 74.17 |
+| 8,192 | 1198.81 | 32.37 | 75.16 |
+| 12,288 | 1201.82 | 34.74 | 75.21 |
+| 16,384 | 1135.02 | 30.75 | 73.26 |
+| 32,768 | 1140.12 | 32.13 | 71.36 |
+| 65,536 | 1059.29 | 23.86 | 67.47 |
+| 131,072 | 1051.10 | 32.91 | 64.29 |
 <!-- /bench -->
 
 ![Single user, DSpark](artifacts/charts/single-dspark.svg)
@@ -158,14 +162,14 @@ which prompt lookup verifies up to 15 tokens at a time. Greedy output is identic
 <!-- bench:single-dspark-udiq2xxs -->
 | DS4.1 Flash UD-IQ2_XXS streamed DSpark<br>Depth (tokens) | Gufo pp (tok/s) | Gufo tg mixed (tok/s) | Gufo tg repetitive (tok/s) |
 | ---: | ---: | ---: | ---: |
-| 0 | 970.69 | 22.89 | 45.27 |
-| 4,096 | 976.51 | 24.11 | 58.34 |
-| 8,192 | 963.91 | 25.56 | 60.89 |
-| 12,288 | 872.44 | 23.75 | 49.84 |
-| 16,384 | 750.64 | 21.52 | 45.27 |
-| 32,768 | 703.94 | 22.13 | 44.16 |
-| 65,536 | 640.29 | 16.74 | 43.87 |
-| 131,072 | 655.39 | 19.54 | 42.23 |
+| 0 | 1042.97 | 24.53 | 49.46 |
+| 4,096 | 1004.79 | 25.48 | 57.72 |
+| 8,192 | 1050.50 | 25.15 | 64.10 |
+| 12,288 | 1070.83 | 25.06 | 61.60 |
+| 16,384 | 1023.93 | 30.38 | 60.55 |
+| 32,768 | 1037.42 | 25.39 | 61.92 |
+| 65,536 | 949.52 | 19.23 | 58.61 |
+| 131,072 | 960.85 | 23.61 | 57.32 |
 <!-- /bench -->
 
 ![Single user, DSpark](artifacts/charts/single-dspark-udiq2xxs.svg)
@@ -180,11 +184,11 @@ in one forward; every output matches its isolated C1 reference.
 <!-- bench:multi-ar -->
 | DS4.1 Flash IQ1_M AR<br>Users | Gufo AR (tok/s) |
 | ---: | ---: |
-| 1 | 24.70 |
-| 2 | 41.97 |
-| 4 | 65.35 |
-| 6 | 77.76 |
-| 8 | 85.85 |
+| 1 | 24.21 |
+| 2 | 41.83 |
+| 4 | 65.37 |
+| 6 | 78.27 |
+| 8 | 87.91 |
 <!-- /bench -->
 
 ![Multiple users, autoregressive](artifacts/charts/multi-ar.svg)
@@ -222,11 +226,11 @@ in one forward; every output matches its isolated C1 reference.
 <!-- bench:multi-ar-udiq2xxs -->
 | DS4.1 Flash UD-IQ2_XXS streamed AR<br>Users | Gufo AR (tok/s) |
 | ---: | ---: |
-| 1 | 16.28 |
-| 2 | 29.80 |
-| 4 | 51.83 |
-| 6 | 65.10 |
-| 8 | 76.33 |
+| 1 | 16.72 |
+| 2 | 30.95 |
+| 4 | 53.62 |
+| 6 | 66.34 |
+| 8 | 77.87 |
 <!-- /bench -->
 
 ![Multiple users, autoregressive](artifacts/charts/multi-ar-udiq2xxs.svg)
@@ -236,6 +240,14 @@ in one forward; every output matches its isolated C1 reference.
 Same pp2048 mixed/repetitive prompts as single-user d0, tg128, context 4096
 per user. Concurrent sessions verify their blocks jointly in batches of up to
 16 rows; every output matches its isolated AR reference.
+
+**Resident `IQ1_M` with DSpark is not supported in this table on the current
+build.** Its weights and the 4.59 GiB drafter leave about 2.2–2.6 GB of device
+heap, below the 4 GiB that Gufo's prompt cache keeps free, so the cache holds no
+checkpoints. Every session would have to be prepared from a C1 checkpoint, so
+the table cannot run. The `IQ1_M` rows below were measured on the fork, which
+kept a 1 GiB reserve. Streamed builds still prepare their sessions, though the
+same gate holds their cache at the 2.2 GB it commits at startup.
 
 <!-- bench:multi-dspark -->
 | DS4.1 Flash IQ1_M DSpark<br>Users | Gufo mixed (tok/s) | Gufo repetitive (tok/s) |
@@ -282,11 +294,11 @@ per user. Concurrent sessions verify their blocks jointly in batches of up to
 <!-- bench:multi-dspark-udiq2xxs -->
 | DS4.1 Flash UD-IQ2_XXS streamed DSpark<br>Users | Gufo mixed (tok/s) | Gufo repetitive (tok/s) |
 | ---: | ---: | ---: |
-| 1 | 22.03 | 42.55 |
-| 2 | 38.63 | 64.21 |
-| 4 | 57.54 | 83.31 |
-| 6 | 61.51 | 91.17 |
-| 8 | 70.26 | 93.38 |
+| 1 | 21.75 | 48.30 |
+| 2 | 39.19 | 70.37 |
+| 4 | 58.57 | 85.18 |
+| 6 | 63.60 | 95.75 |
+| 8 | 72.34 | 96.26 |
 <!-- /bench -->
 
 ![Multiple users, DSpark](artifacts/charts/multi-dspark-udiq2xxs.svg)

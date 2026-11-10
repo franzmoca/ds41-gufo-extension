@@ -14,15 +14,15 @@
       "gpuName": "AMD Radeon 8060S Graphics",
       "gpuPciId": "1002:1586",
       "kernelRelease": "7.2.11-200.fc44.x86_64",
-      "memoryTotalBytes": 133616861184,
+      "memoryTotalBytes": 133610618880,
       "memoryType": "LPDDR5X (Unified)",
-      "rocmVersion": "7.2.3",
+      "rocmVersion": "10.1.0",
       "schemaVersion": "1.0.0"
     },
-    "fingerprintId": "d19fe457f2791c2dec2f2de6cd1c21607a1d51ce20c58e0d686637de1fa0d0a1",
+    "fingerprintId": "020ed576e59c3f17d0183315e77b9bf515618bf27644b8a230d97209c0b845d0",
     "schemaVersion": "1.0.0"
   },
-  "measuredOn": "2026-10-31",
+  "measuredOn": "2026-11-10",
   "mode": "dspark",
   "model": {
     "id": "DeepSeek-V4.1-Flash-1017",
@@ -35,186 +35,186 @@
   "referenceName": "reference",
   "rows": {
     "0": {
-      "acceptance": 73.49,
+      "acceptance": 75.68,
       "acceptance_sd": null,
-      "accepted_per_step": 0.91,
+      "accepted_per_step": 0.78,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 58195 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 0,
-          "completion_sha256": "07c9344c5a9e93a44bbd011760476a73f1182dbefaf3cec2e4fc5fa089d78710",
-          "draft_n": 83,
-          "draft_n_accepted": 61,
+          "completion_sha256": "676013572405aa502146c857ad4d4cd6f45a8c5e5b62e4e1535a797c5fc4db43",
+          "draft_n": 74,
+          "draft_n_accepted": 56,
           "predicted_n": 128,
           "prompt_n": 2035
         }
       ],
-      "pp": 1219.56,
+      "pp": 1234.26,
       "pp_sd": null,
       "samples": 1,
-      "tg": 31.06,
+      "tg": 30.99,
       "tg_sd": null,
       "workload": "prose"
     },
     "12288": {
-      "acceptance": 64.71,
+      "acceptance": 69.23,
       "acceptance_sd": null,
-      "accepted_per_step": 1.06,
+      "accepted_per_step": 1.29,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 34527 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 12241,
-          "completion_sha256": "c9bf20b0c17d3614fb4833fd68c74598b99d0aa8d8e3ac8907562f80e68e3eae",
-          "draft_n": 102,
-          "draft_n_accepted": 66,
+          "completion_sha256": "9a7c94d91b53c81bc2c536ac5f5c48d1adbf73a3e1c191e2badae3187e7d6299",
+          "draft_n": 104,
+          "draft_n_accepted": 72,
           "predicted_n": 128,
           "prompt_n": 2042
         }
       ],
-      "pp": 1123.05,
+      "pp": 1201.82,
       "pp_sd": null,
       "samples": 1,
-      "tg": 30.97,
+      "tg": 34.74,
       "tg_sd": null,
       "workload": "prose"
     },
     "131072": {
-      "acceptance": 58.18,
+      "acceptance": 68.81,
       "acceptance_sd": null,
-      "accepted_per_step": 1.0,
+      "accepted_per_step": 1.42,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 58195 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 131248,
-          "completion_sha256": "3a517a3ed8fa26b90befd9e506b4fb3f8d9fef3863a2679ee02afc4cfa140da5",
-          "draft_n": 110,
-          "draft_n_accepted": 64,
+          "completion_sha256": "2b98e9885564306b9f8dbe2640774e46694d5513f616c06d886ee3ca0324c629",
+          "draft_n": 109,
+          "draft_n_accepted": 75,
           "predicted_n": 128,
           "prompt_n": 2052
         }
       ],
-      "pp": 891.8,
+      "pp": 1051.1,
       "pp_sd": null,
       "samples": 1,
-      "tg": 27.86,
+      "tg": 32.91,
       "tg_sd": null,
       "workload": "prose"
     },
     "16384": {
-      "acceptance": 74.73,
+      "acceptance": 60.78,
       "acceptance_sd": null,
-      "accepted_per_step": 1.13,
+      "accepted_per_step": 0.94,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 34527 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 16364,
-          "completion_sha256": "b122b30be316bfb85013d029deeb0bc21ec4a66e2a1073c7d0a0f228f18c0568",
-          "draft_n": 91,
-          "draft_n_accepted": 68,
+          "completion_sha256": "c6bdc1eb1e8e5e813201f0e7f0312626b43beb3678a9786db6825cc4d1386bbc",
+          "draft_n": 102,
+          "draft_n_accepted": 62,
           "predicted_n": 128,
           "prompt_n": 2054
         }
       ],
-      "pp": 1167.47,
+      "pp": 1135.02,
       "pp_sd": null,
       "samples": 1,
-      "tg": 32.74,
+      "tg": 30.75,
       "tg_sd": null,
       "workload": "prose"
     },
     "32768": {
-      "acceptance": 62.24,
+      "acceptance": 63.06,
       "acceptance_sd": null,
-      "accepted_per_step": 0.91,
+      "accepted_per_step": 1.21,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 58195 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 32798,
-          "completion_sha256": "2bf7f84d50bee36d024f23dc8d91f2434c2c61c72f800675047e91d642226654",
-          "draft_n": 98,
-          "draft_n_accepted": 61,
+          "completion_sha256": "5012642c1e9494bb6b67641d0bf6257db476bef293ee84d9f12a886550c7a948",
+          "draft_n": 111,
+          "draft_n_accepted": 70,
           "predicted_n": 128,
           "prompt_n": 2035
         }
       ],
-      "pp": 979.26,
+      "pp": 1140.12,
       "pp_sd": null,
       "samples": 1,
-      "tg": 29.09,
+      "tg": 32.13,
       "tg_sd": null,
       "workload": "prose"
     },
     "4096": {
-      "acceptance": 67.74,
+      "acceptance": 69.51,
       "acceptance_sd": null,
-      "accepted_per_step": 0.97,
+      "accepted_per_step": 0.8,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 58195 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 4116,
-          "completion_sha256": "96e83277bff64c35a1399a1b4ea170de720dc24e106e4f7db8bb116ca34e77da",
-          "draft_n": 93,
-          "draft_n_accepted": 63,
+          "completion_sha256": "ecad685284e508106ae3133da986c7b1e9982dbe3b234364e112ff297e2e12cc",
+          "draft_n": 82,
+          "draft_n_accepted": 57,
           "predicted_n": 128,
           "prompt_n": 2040
         }
       ],
-      "pp": 1003.78,
+      "pp": 1212.48,
       "pp_sd": null,
       "samples": 1,
-      "tg": 30.92,
+      "tg": 31.19,
       "tg_sd": null,
       "workload": "prose"
     },
     "65536": {
-      "acceptance": 78.69,
+      "acceptance": 48.39,
       "acceptance_sd": null,
-      "accepted_per_step": 0.6,
+      "accepted_per_step": 0.13,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 58195 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 65569,
-          "completion_sha256": "164c05bd71ae985491171c773e7ff5ff7aaaf4b4553c5eeb5f46195597466a2c",
-          "draft_n": 61,
-          "draft_n_accepted": 48,
+          "completion_sha256": "e8f1a7ef86cfd60247b177d35ba2fa45d0fd70b75dc1241e76d1761b3026bb0f",
+          "draft_n": 31,
+          "draft_n_accepted": 15,
           "predicted_n": 128,
           "prompt_n": 2056
         }
       ],
-      "pp": 881.96,
+      "pp": 1059.29,
       "pp_sd": null,
       "samples": 1,
-      "tg": 26.88,
+      "tg": 23.86,
       "tg_sd": null,
       "workload": "story"
     },
     "8192": {
-      "acceptance": 74.12,
+      "acceptance": 67.71,
       "acceptance_sd": null,
-      "accepted_per_step": 0.97,
+      "accepted_per_step": 1.03,
       "accepted_per_step_sd": null,
-      "command": "gufo serve --port 34527 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
+      "command": "gufo serve --port 49401 --sessions 1 llm --model DeepSeek-V4.1-Flash-1017-GSQ-RCO-IQ1_M-00001-of-00006.gguf --context 133760 --served-model-name bench --think off --max-pending-per-client 8 --speculative dspark --dspark-model DeepSeek-V4.1-Flash-1017-DSpark-draft-Q2K-Q4K.gguf",
       "counts": [
         {
           "cache_n": 8177,
-          "completion_sha256": "a338bbc916a5510db89d2b0964517c13d6d3488d827ba261f83ec21c9cc1f19b",
-          "draft_n": 85,
-          "draft_n_accepted": 63,
+          "completion_sha256": "49043c4b56ef81175c8298f0ab68f03dbac4baa4d571f9dd1061b4ebdebb5106",
+          "draft_n": 96,
+          "draft_n_accepted": 65,
           "predicted_n": 128,
           "prompt_n": 2028
         }
       ],
-      "pp": 1199.46,
+      "pp": 1198.81,
       "pp_sd": null,
       "samples": 1,
-      "tg": 31.3,
+      "tg": 32.37,
       "tg_sd": null,
       "workload": "prose"
     }
@@ -225,7 +225,7 @@
       "gufo",
       "serve",
       "--port",
-      "34527",
+      "49401",
       "--sessions",
       "1",
       "llm",
@@ -248,7 +248,7 @@
   "source": {
     "buildMode": "nix-release",
     "dirty": true,
-    "revision": "0eb9e89ca9c2a679d6ebd9819cc497e5bf498feb"
+    "revision": "ab0de16d18cd9a9dd87a99f95d65946781ae321f"
   },
   "table": "single-dspark",
   "target": "gufo"
