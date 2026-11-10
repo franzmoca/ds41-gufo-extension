@@ -47,6 +47,12 @@ constexpr uint64_t kGiB = 1ull << 30;
  * and transient prefill peaks. The server sizes the cache after its sessions
  * instead (ds41_expert_store_set_reserve). */
 constexpr uint64_t kReserve = 4 * kGiB;
+/* The batch scratch grows with the prefill batch: 0.55 GiB measured from
+ * 2,048 to 4,096 tokens. Left out of the load seed's headroom, a 4,096-token
+ * batch took the device heap under the reserve the prompt cache's backing
+ * must keep, and the server ran without a prompt cache (E113). */
+constexpr uint64_t kReserveBatch = 2048;
+constexpr uint64_t kReservePerToken = 320 << 10;
 /* Free memory below which the cache stops growing once the server has sized
  * it after its sessions: the limit already holds back the buffers the first
  * prompt allocates, so only transient prefill peaks (~0.3-0.6 GiB) and margin
@@ -990,7 +996,8 @@ struct ds41_expert_store {
 
 ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
                                             const ds41_weights* weights,
-                                            uint64_t cache_limit_bytes) {
+                                            uint64_t cache_limit_bytes,
+                                            uint32_t prefill_batch) {
   if (!model || !weights || model->n_shards > DS41_MAX_SHARDS ||
       weights->n_expert < DS41_N_EXPERT_USED || weights->n_expert > DS41_MAX_EXPERT)
     return nullptr;
@@ -1109,7 +1116,10 @@ ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
     return nullptr;
   }
   const uint64_t available = ds41_expert_available_memory();
-  store->cache_limit = available > kReserve ? available - kReserve : 0;
+  if (prefill_batch > kReserveBatch)
+    store->reserve += (prefill_batch - kReserveBatch) * kReservePerToken;
+  store->cache_limit =
+      available > store->reserve ? available - store->reserve : 0;
   store->requested_limit = cache_limit_bytes;
   if (cache_limit_bytes)
     store->cache_limit = std::min(store->cache_limit, cache_limit_bytes);

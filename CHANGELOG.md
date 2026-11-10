@@ -22,6 +22,10 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   started after a run with long prompts could leave 0.4-0.6 GiB of it unused
   for its whole run ([E104](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained)).
 
+* **streaming:** `--prefill-batch` above 2048 on a streamed model no longer
+  leaves the server without a prompt cache
+  ([E113](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e113--load-headroom-that-grows-with-the-prefill-batch-retained)).
+
 ### Performance
 
 * **streaming:** the prompt cache keeps 16 transfer streams plus one per

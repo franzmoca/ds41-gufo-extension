@@ -305,13 +305,13 @@ against an uncached prompt.
 
 ### 42. 4,096-token prefill batches for streamed builds
 
-`--prefill-batch 4096` is 5-8.5% faster on fresh 15-24K-token served
-prompts (E112), but its sessions take ~0.55 GiB more and the prompt cache's
-backing is then refused at load (`device_heap_reserve`), so repeated and
-continued prompts run in full. Next: have the load seed leave the room a
-larger batch needs (`kReserve` in `runtime/expert_store.cpp` is sized for
-2,048), then measure fresh, repeated and continued prompts and decode
-misses with the ~0.55 GiB smaller expert cache before changing the default.
+`--prefill-batch 4096` is 3-8% faster on fresh 15-24K-token served prompts
+and keeps its prompt cache since E113, for 1.1-1.3 GiB less expert cache
+(AR decode within ±0.7%). It changes greedy replies after a 24K prompt
+(E113), so as a default it is an output change. Next: trace which batched
+path depends on the batch boundaries (compare logits of the same prompt at
+both sizes, first differing layer); if it can be made batch-independent,
+re-measure decode misses and DSpark with the smaller cache.
 
 ### 33. Attention partials written back during the dense GEMVs
 

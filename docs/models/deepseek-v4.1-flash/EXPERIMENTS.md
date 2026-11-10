@@ -146,6 +146,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E110](#e110--decode-gemv-workgroups-striding-over-row-tiles-rejected) | decode kernels | rejected | Dense decode GEMV with a fixed grid of workgroups striding over the row tiles: bit-identical, 219-228 GB/s in every grid, as before. A plain read loses 4-9 GB/s to the GEMV's access pattern at decode sizes, not to workgroup turnover. |
 | [E111](#e111--hyper-connection-state-pass-against-the-copy-ceiling-measured) | prefill kernels | measured | The batched state pass moves 184-187 GB/s of reads and writes against a ~209 GB/s copy ceiling; its 24 mix dots cost 0.2-0.35 ms of 2.3-3.6 ms. Left unchanged. |
 | [E112](#e112--4096-token-prefill-batches-on-served-streamed-text-measured) | prefill pipeline | measured | `--prefill-batch 4096` on streamed `UD-IQ2_XXS`: fresh 15-24K prompts −5 to −8.5%, but the prompt cache's backing is refused at load and repeated prompts run again in full. |
+| [E113](#e113--load-headroom-that-grows-with-the-prefill-batch-retained) | streaming | retained | The load seed leaves 320 KiB per batch token above 2,048, so `--prefill-batch 4096` keeps its prompt cache: fresh 15-24K prompts −2.6 to −7.7% against 2,048 with cached repeats and continuations; expert cache −1.1 to −1.3 GiB, AR decode within ±0.7%. The batch size changes replies after a 24K prompt, so it stays an option. |
 
 ## Milestones
 
@@ -4222,9 +4223,47 @@ token. The larger sessions take ~0.55 GiB more (the expert cache's second
 seed grows by 2.00 instead of 2.55 GiB), and the prompt cache's first
 backing segment is refused at load (`backing_limited
 reason=device_heap_reserve`, 4.27 GB of device heap free), so every capture
-is refused and repeated or continued prompts run in full, as in E16. Not a
-default until the load seed leaves the sessions of a larger batch their
-room: [BACKLOG](BACKLOG.md#42-4096-token-prefill-batches-for-streamed-builds).
+is refused and repeated or continued prompts run in full, as in E16. Fixed
+in E113.
+
+## E113 — load headroom that grows with the prefill batch (retained)
+
+E112's lost prompt cache is an ordering problem at load. The expert cache
+is seeded up to a fixed headroom (4 GiB and a sixteenth of the budget),
+the sessions are allocated, the prompt cache commits its backing, which
+must leave 4 GiB of device heap free, and only then is the expert cache
+fitted to what is left. A 4,096-token batch's scratch takes ~0.55 GiB
+more, the heap was at 4.27 GB when the backing asked for its first 118 MB
+segment, nothing was committed, and the fitted expert cache then took the
+room for good. The store now adds 320 KiB of headroom per batch token
+above 2,048 before the load seed (`ds41_expert_store_create`); 2,048-token
+servers are unchanged.
+
+Streamed `UD-IQ2_XXS`, `MXFP8` Engram, DSpark, vision, one session, fresh
+server per run, this build, run order 4096, 2048, 2048, 4096; replies
+(`max_tokens` 1) identical:
+
+| Prompt | 2,048 | 4,096 | Change |
+| --- | ---: | ---: | ---: |
+| 14,144 tokens | 14,012 / 13,834 ms | 13,867 / 13,228 ms | −2.7% |
+| 19,916 | 18,475 / 18,119 | 17,050 / 16,803 | −7.5% |
+| 23,943 | 21,327 / 21,046 | 20,232 / 20,569 | −3.7% |
+| The 23,943-token prompt again | 0 | 0 | cached in both |
+| Continued by 6 tokens | 269 / 252 | 257 / 257 | |
+| Expert cache | 97.25 / 97.41 GiB | 96.15 / 96.22 GiB | −1.1 GiB |
+
+The backing commits 0.83 GiB at 4,096 (one segment still refused) against
+0.95 GiB, and no capture is refused. AR decode without a drafter (cache
+102.03 against 100.75 GiB, one run each; chat, code, long, 512 tokens):
+29.63 / 28.52 / 30.06 s at 2,048 and 29.71 / 28.56 / 29.85 s at 4,096,
+within ±0.7%.
+
+The batch size is not output-neutral: after the 23,974-token document the
+two servers' greedy replies part at the 15th token (chat and code replies
+are identical, as are all one-token prompt replies). Which batched path
+depends on the batch boundaries was not traced. 4,096 therefore stays an
+option; as a default it would need the quality gates of an output change.
+[Runs](artifacts/2026-11-10-prefill-kernels/runs.json).
 
 ## Backlog measurements without an E-number
 

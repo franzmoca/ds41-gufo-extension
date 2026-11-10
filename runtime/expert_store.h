@@ -43,10 +43,13 @@ struct ds41_expert_overlap {
 };
 
 /* The model and its shard descriptors outlive the store. cache_limit_bytes
- * bounds the pool when nonzero; zero sizes it from available device memory. */
+ * bounds the pool when nonzero; zero sizes it from available device memory.
+ * prefill_batch is the engine's batch size (0: the default): the headroom
+ * left for the sessions grows with it. */
 ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
                                             const ds41_weights* weights,
-                                            uint64_t cache_limit_bytes = 0);
+                                            uint64_t cache_limit_bytes = 0,
+                                            uint32_t prefill_batch = 0);
 void ds41_expert_store_destroy(ds41_expert_store* store);
 
 /* Splits every expert read between the model's GGUF and a tails file built by
