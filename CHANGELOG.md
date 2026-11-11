@@ -38,9 +38,6 @@ later.
 
 ### Bug Fixes
 
-* **install:** `gufo extension install` builds the extension as a module. The
-  `CLAUDE.md` symlink made Gufo's source copy fail; it is now a regular file.
-
 * **streaming:** the expert cache fills to its limit at startup; a server
   started after a run with long prompts could leave 0.4-0.6 GiB of it unused
   for its whole run ([E104](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e104--a-96-row-prefetch-stage-that-keeps-the-most-routed-experts-retained)).
