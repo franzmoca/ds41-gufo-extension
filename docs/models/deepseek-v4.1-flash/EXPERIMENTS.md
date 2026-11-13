@@ -154,6 +154,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E118](#e118--json-constraint-masks-computed-ahead-of-the-selection-rejected) | sampling, tools | rejected | Tool-call cycles spend ~4% of agent decode on the host (mask misses 3-10 ms, constrained draws ~0.8 ms per row). Walking the proposals' grammar states during the evaluation: 162.2 against 161.6 s per replay; a 1,024-entry mask cache: 158.7 against 157.1 s. |
 | [E119](#e119--a-64-row-demand-stage-misses-past-it-read-into-cache-slots-retained) | expert cache | retained | The whole-layer demand stage (3.7 GiB) becomes 64 rows; a batch with more misses reads the experts it admits into their slots and lends slots to the rest. Expert cache 97.2 → 101.0 GiB: replies at server defaults decode −1.6%, prefill −2.4%; agent replay decode −1.1% (base runs 1.9% apart), prefill −2.7%, 16% fewer MiB read per token. Outputs identical. |
 | [E120](#e120--every-admitted-miss-read-straight-into-its-slot-rejected) | expert cache | rejected | Reading every admitted miss into its slot, not only a batch's misses past the 64 stage rows, removes the stage-to-slot copy but slows decode: replies +1.2%, agent replay +1.8%, prefill unchanged. Outputs identical. |
+| [E122](#e122--wait-for-queued-writes-before-a-prompt-cache-capture-retained) | prompt cache, DSpark | retained | Captures read on non-blocking transfer streams while the drafter's ring stores were still queued on the null stream. The checkpoint 3 tokens before the end of each prompt saved stale drafter rings every time, 36 of 36 over three servers with 4 and 16 hardware queues. With a wait for the null stream before each capture, 0 of 24. Window, pool, rows and logits captures matched in every arm. |
 
 ## Milestones
 
@@ -4536,6 +4537,39 @@ Not profiled: a slot read is three per-expert reads, without the stage's
 merging of experts adjacent in the file, and lands in the cache's managed
 chunks instead of the stage's device allocation (zero-copy reads lost the
 same way, item 29). Not retained.
+
+## E122 — wait for queued writes before a prompt-cache capture (retained)
+
+A prompt-cache capture reads the session's device state on Gufo's transfer
+streams, which are non-blocking, and `ContinuationAdapter::Transfer` did not
+wait for the null stream. An evaluation leaves work queued there: the
+drafter's ring stores (`ds41_dspark_inject`, `store_ring`) after each batch,
+and the window and pool copies of `ds41_decoder_commit` after a step. Gufo
+starts the capture as soon as the step returns. A capture now waits for the
+null stream first, as Gufo's Qwen adapter waits for its execution stream.
+
+A temporary probe kept each capture's bytes and compared them with the
+source after a device sync, before the next write to that source. Streamed
+`UD-IQ2_XXS` with the unsloth `Q5_K` Engram, DSpark, 76 GiB expert cache,
+one session, fresh server per arm. Each arm runs eleven rounds, each a
+15,019-token prompt followed by a 24-token greedy prompt. Stale drafter
+captures:
+
+| Server | Before | After |
+| --- | ---: | ---: |
+| `GPU_MAX_HW_QUEUES=16`, run 1 | 12 / 68 | 0 / 68 |
+| `GPU_MAX_HW_QUEUES=16`, run 2 | 12 / 68 | 0 / 68 |
+| Default queues | 12 / 68 | not run |
+
+In every arm without the change, the stale captures were the checkpoint
+3 tokens before the end of each prompt: position 15,016 of 15,019 for the
+long prompts, and 21 of 24 the first time the short prompt ran. Each
+differed in 37,164 to 379,668 of its 786,432 bytes. The other drafter
+captures matched. Window, pool, rows and logits captures matched in every
+arm. Each arm had 1,616 row captures and 68 of each private component. A restore from such
+a checkpoint would draft from stale rows. The target model checks every
+draft, so replies were identical (all 50 greedy cache hits correct), and
+decode on the hits was 15.5-17.5 tok/s before and 15.5-16.3 after.
 
 ## Backlog measurements without an E-number
 
