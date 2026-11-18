@@ -5,42 +5,20 @@
 
 #include <hip/hip_runtime_api.h>
 
+#include "expert_stream/store.h"
+
 struct ds41_expert_store;
 struct ds41_model;
 struct ds41_weights;
 
-struct ds41_expert_store_stats {
-  uint64_t uses = 0;
-  uint64_t hits = 0;
-  uint64_t bytes_read = 0;
-  uint64_t tokens = 0;
-  uint64_t stall_ns = 0;
-  uint64_t route_wait_ns = 0;  // part of stall_ns: waiting for the routes
-  uint64_t read_wait_ns = 0;   // part of stall_ns: waiting for demand reads
-  uint64_t cache_bytes = 0;
-  uint64_t prefetch_bytes = 0;         // staged by background prefetch jobs
-  uint64_t prefetch_dropped_bytes = 0; // prefetched bytes no prepare consumed
-};
+/* The model-neutral store's statistics and overlap view (expert_stream/store.h).
+ * Each expert has three pieces, so an overlap's table holds the gate, up and
+ * down tables, in that order. */
+using ds41_expert_store_stats = expert_stream::Stats;
+using ds41_expert_overlap = expert_stream::Overlap;
 
 /* Available unified host memory, including reclaimable file cache. */
 uint64_t ds41_expert_available_memory();
-
-/* What ds41_expert_store_prepare stages for the layer, for work overlapped
- * with the projection reads. The id rows keep their route positions: hit_ids
- * holds the resident experts with misses as -1, miss_ids the read experts
- * with hits as -1, so a launch over one array zeroes exactly the rows the
- * other launch fills. table[p] holds each expert's device weight base (its
- * cache slot, or the stage row a read just filled), so kernels read cached
- * experts without a staging copy. */
-struct ds41_expert_overlap {
-  uint32_t layer;
-  uint32_t rows;            // n_tokens * DS41_N_EXPERT_USED route rows
-  uint32_t miss_rows;       // rows served by reads this call
-  const int32_t* hit_ids;   // device rows; null unless the batch both hits and
-                            // misses within the buffer
-  const int32_t* miss_ids;  // as hit_ids
-  const void* table[3];     // device [DS41_MAX_EXPERT] weight bases
-};
 
 /* The model and its shard descriptors outlive the store. cache_limit_bytes
  * bounds the pool when nonzero; zero sizes it from available device memory.
