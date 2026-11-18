@@ -72,14 +72,20 @@ only the resident tensors, so the dense weights go through the device heap.
   interleaved across layers. The seed fills 15/16 of min(cap, free memory −
   reserve), leaving room for session allocations and request-specific
   experts; seed reads do not count in the statistics.
-- **Fit after the sessions.** Once `gufo serve` has created its sessions
-  and the RAM prompt cache's backing, it allocates the prefetch stage and
-  sets the limit to the cache plus the free memory minus the reserve. Over
-  it, the newest chunks are freed: each size class keeps its highest-scored
-  experts, moving survivors out of the freed chunks into the slots of the
-  evicted ones. The ranking then seeds whatever room is left, so the first
-  prompt does not grow the cache. With `--cache-disk`, a streamed model's
-  automatic RAM prompt cache is 1 GiB (3 GiB without it).
+- **Fit after the sessions.** The runner declares an expert-cache claim
+  (Gufo's `TextRunnerExpertCacheClaim`): its store, 2 GiB of headroom, and
+  the RAM prompt cache's automatic share, 1 GiB per session with
+  `--cache-disk` (3 GiB without it). Once `gufo serve` has created its
+  sessions and the prompt cache's backing, it grants the store the cache
+  plus the free memory, minus the headroom and the prompt-cache budget still
+  to commit, and the store allocates the prefetch stage out of the grant and
+  takes the rest as its limit. Over it, the newest chunks are freed: each
+  size class keeps its highest-scored experts, moving survivors out of the
+  freed chunks into the slots of the evicted ones. The ranking then seeds
+  whatever room is left, so the first prompt does not grow the cache. The
+  RAM prompt cache keeps what its backing committed by then: growing it
+  later needs 4 GiB of device heap free, which the fitted expert cache does
+  not leave (E126); the disk cache serves the rest.
 
 ## A layer's prepare
 

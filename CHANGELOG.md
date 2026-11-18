@@ -34,6 +34,14 @@ more may lose some speed.
 Built on upstream Gufo `a27bbf98`, the same pin as 0.3.0; needs extension API
 0.3.3 or later.
 
+### Features
+
+* **expert streaming:** Gufo's serving sizes the streamed expert cache
+  together with the RAM prompt cache, and the automatic prompt-cache share
+  (1 GiB with `--cache-disk`, 3 GiB without) is now per session
+  ([E126](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained)).
+  Needs extension API 0.3.27.
+
 ### Fixes
 
 * **dspark:** a DSpark drafter whose tensors include types Gufo's GGUF
