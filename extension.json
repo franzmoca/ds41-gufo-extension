@@ -2,7 +2,7 @@
   "schema": 1,
   "name": "deepseek41flash",
   "version": "0.3.0",
-  "api_version": ">= 0.3.3",
+  "api_version": ">= 0.3.26",
   "entry": "deepseek41flash_register",
   "registration_target": "gufo_deepseek41flash",
   "depends": [],
@@ -187,12 +187,6 @@
       "role": "test"
     },
     "deepseek41flash_expert_store_test": {
-      "requires": [
-        "testing"
-      ],
-      "role": "test"
-    },
-    "deepseek41flash_expert_stream_test": {
       "requires": [
         "testing"
       ],
