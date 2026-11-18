@@ -159,6 +159,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E123](#e123--one-prefill-batch-per-pass-beside-decoders-retained) | scheduling, prefill | retained | Gufo's extension API 0.3 has each runner declare the prompt tokens per pass beside decoding sessions; the 0.2 host used 512. An uncached 8.6-9.7K-token prompt arriving while another session decodes: 512 → 736 tok/s, 1,024 → 873, 2,048 → 1,001, 4,096 → 1,002. The decoding session's total stall 16.1 → 12.0 s, its longest 1.9 → 2.3 s, decode unchanged. Passes now take one prefill batch (2,048 by default). Outputs identical. |
 | [E124](#e124--a-model-neutral-expert-store-retained) | expert cache | retained | The expert cache, reads and prefetch become a model-neutral store (`runtime/expert_stream/`) described by a layout of pieces in files and a policy; DeepSeek's tensors, reserve, ranking and pruned builds stay in its adapter. Same expert trace as before on an agent replay, same replies and drafts; decode 156.3 → 155.8 s (A B B A). |
 | [E125](#e125--the-expert-store-moves-into-gufo-retained) | expert cache | retained | The model-neutral expert store moves into Gufo as an experimental API (extension API 0.3.26), built without this extension's fast-math; the extension keeps its DeepSeek layout and policy. Same expert trace as before, same replies and drafts; decode 155.6/156.2 s in both arms (A B B A). |
+| [E126](#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained) | expert cache | retained | Gufo's serving sizes the expert cache from a runner claim (headroom, prompt-cache share per session) instead of the runner's backing hook (extension API 0.3.27). Same trace, replies and drafts; decode 155.0/155.3 s against 155.3/155.9 s (A B B A). With streamed experts the prompt cache holds what its backing commits at startup: reserving more host memory for it left the memory idle. |
 
 ## Milestones
 
@@ -4741,6 +4742,55 @@ slowly (ready in 43 s against 20-31 s) and prefilled 11% slower. With two
 sessions and `--context 32768`, Gufo's `conversation`, `long-context` and
 `cache` suites (disk restart included) passed. The arms' JSON is in
 [artifacts/2026-11-18-gufo-expert-stream/](artifacts/2026-11-18-gufo-expert-stream/).
+
+## E126 — serving sizes the expert cache with the prompt cache (retained)
+
+Gufo's serving now sizes a streamed expert cache together with the RAM prompt
+cache (extension API 0.3.27). The runner declares a claim
+(`TextRunnerExpertCacheClaim`): its store, 2 GiB of headroom, and the prompt
+cache's automatic share per session, 1 GiB with `--cache-disk` and 3 GiB
+without. Once the sessions and the prompt cache's backing exist, serving
+measures the host once, grants the store what it holds plus the free memory
+less the headroom and the prompt-cache budget beyond the backing's 2 GiB
+grow-ahead, and the store fits to the grant (`Store::Fit`, which also seeds
+the room left with the ranking it last seeded). This replaces the runner's
+`commit_backing` hook and `ds41_engine_fit_experts`, and the store's own
+copy of the available-memory code. The share used to be per server; with
+more than one session the automatic prompt cache now grows with them.
+
+Same setup as E125, both arms on Gufo `eb9dea37`. With `DS41_EXPERT_TRACE`
+and an 80 GiB cache the claim build wrote E125's trace (57,480 prepares,
+838,500 router predictions, 16,961 tokens) and the same seeds. Without
+tracing, in the order A B B A:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| E125 store A1 | 100.9 | 98.41% | 24.0 | 155.0 | 36.0 |
+| claim B1 | 101.0 | 98.43% | 23.8 | 155.3 | 35.5 |
+| claim B2 | 101.0 | 98.43% | 24.0 | 155.9 | 35.1 |
+| E125 store A2 | 100.5 | 98.39% | 24.4 | 155.3 | 35.1 |
+
+Every arm gave the same replies and drafts (3,527 drafted, 2,951 accepted).
+Two runs per arm do not show whether the single measurement varies less
+than before. With two sessions and `--context 32768`, Gufo's `conversation`,
+`long-context` and `cache` suites passed (16 cases).
+
+At `--sessions 2` the automatic prompt-cache budget is 2 GiB, but its backing
+commits only 0.47-0.63 GiB of its 1.77 GiB capacity before readiness: a
+backing segment is added only while 4 GiB of device heap stay free (Gufo's
+`kDispatchReserve`), and the provisional expert cache leaves about 4.4 GiB.
+Once the expert cache is fitted (100.2-100.4 GiB) the heap has 1.4 GiB free,
+and the backing never grows: with 16 distinct 6,000-token prompts it refused
+growth twice (`device_heap_reserve`) and held 0.54 GiB, and the first four
+prompts asked again were restored from the disk cache (155-210 ms each).
+Reserving the uncommitted 1.3 GiB from the expert cache instead (rejected)
+shrank it to 99.1 GiB and left 2.8 GiB of heap free, still under the
+reserve: the backing did not grow either, the same prompts came from disk,
+and the memory stayed idle (2.76 GiB free at least, against 1.28 GiB). The
+grant's log line now reports the backing actually committed beside the
+budget. At one session the backing commits its whole 0.88 GiB. The arms'
+JSON is in
+[artifacts/2026-11-18-expert-cache-claim/](artifacts/2026-11-18-expert-cache-claim/).
 
 ## Backlog measurements without an E-number
 
