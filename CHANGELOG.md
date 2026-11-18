@@ -5,6 +5,14 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ## Unreleased
 
+### Features
+
+* **expert streaming:** Gufo's serving sizes the streamed expert cache
+  together with the RAM prompt cache, and the automatic prompt-cache share
+  (1 GiB with `--cache-disk`, 3 GiB without) is now per session
+  ([E126](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained)).
+  Needs extension API 0.3.27.
+
 ### Fixes
 
 * **tokenization:** control-token spellings in request text stay text.
