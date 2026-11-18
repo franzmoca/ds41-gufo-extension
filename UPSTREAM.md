@@ -23,9 +23,8 @@ from it. The V4 engine itself stays unchanged.
   and cancellation.
 - `runtime/` holds the V4.1 decoder (`v41_decode.cpp`), request sessions and
   the DSpark policy (`v41_session.cpp`), the drafter (`v41_dspark.cpp`), SSD
-  expert streaming (the model-neutral store in `expert_stream/` and its
-  DeepSeek layout and policy in `expert_store.cpp`), GGUF loading and the
-  tokenizer.
+  expert streaming (the DeepSeek layout and policy, in `expert_store.cpp`,
+  for Gufo's experimental expert store), GGUF loading and the tokenizer.
 - `kernels/rocm/` holds every V4.1 kernel (`ds41_v41.h` lists them) and the
   vendored llama.cpp quantized matrix kernels in `mmq/`
   ([VENDOR.md](kernels/rocm/mmq/VENDOR.md)).
