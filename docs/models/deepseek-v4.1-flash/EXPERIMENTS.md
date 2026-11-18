@@ -158,6 +158,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E122](#e122--wait-for-queued-writes-before-a-prompt-cache-capture-retained) | prompt cache, DSpark | retained | Captures read on non-blocking transfer streams while the drafter's ring stores were still queued on the null stream. The checkpoint 3 tokens before the end of each prompt saved stale drafter rings every time, 36 of 36 over three servers with 4 and 16 hardware queues. With a wait for the null stream before each capture, 0 of those 24 checkpoints stale (0 of 136 drafter captures, two servers with 16 queues). Window, pool, rows and logits captures matched in every arm. |
 | [E123](#e123--one-prefill-batch-per-pass-beside-decoders-retained) | scheduling, prefill | retained | Gufo's extension API 0.3 has each runner declare the prompt tokens per pass beside decoding sessions; the 0.2 host used 512. An uncached 8.6-9.7K-token prompt arriving while another session decodes: 512 → 736 tok/s, 1,024 → 873, 2,048 → 1,001, 4,096 → 1,002. The decoding session's total stall 16.1 → 12.0 s, its longest 1.9 → 2.3 s, decode unchanged. Passes now take one prefill batch (2,048 by default). Outputs identical. |
 | [E124](#e124--a-model-neutral-expert-store-retained) | expert cache | retained | The expert cache, reads and prefetch become a model-neutral store (`runtime/expert_stream/`) described by a layout of pieces in files and a policy; DeepSeek's tensors, reserve, ranking and pruned builds stay in its adapter. Same expert trace as before on an agent replay, same replies and drafts; decode 156.3 → 155.8 s (A B B A). |
+| [E125](#e125--the-expert-store-moves-into-gufo-retained) | expert cache | retained | The model-neutral expert store moves into Gufo as an experimental API (extension API 0.3.26), built without this extension's fast-math; the extension keeps its DeepSeek layout and policy. Same expert trace as before, same replies and drafts; decode 155.6/156.2 s in both arms (A B B A). |
 | [E129](#e129--keep-the-expert-cache-above-gufos-host-reserve-retained) | expert cache, prompt cache | retained | Gufo past #1275 gives the RAM prompt cache's memory back whenever less than 4 GiB is available; a streamed expert cache that leaves 1-2 GiB lost the whole prompt cache at the first idle moment, and every later turn prefilled its whole prompt (agent session 1,924 s instead of 615 s). The cache now stops at 4.5 GiB free (5.5 GiB at startup), which lets `main` pin Gufo `e7e38411` with #1326 and #1327 (#13). Coding-agent replay A B B A: 97.0/97.3 GiB instead of 100.9/100.8, route hits 98.08/98.10% instead of 98.42/98.41%, decode 153.4/152.5 s against 152.6/156.1 s, prefill 36.5/36.0 s against 35.2/35.2 s. |
 
 ## Milestones
@@ -4758,6 +4759,40 @@ different tool call; both B runs agree, with E127's drafts (3,519 drafted,
 2,939 accepted). On the agent session B matched the draft branch's prompt
 cache request for request (60 RAM, 1 disk, 1 cold; 107,952 tokens
 prefilled), in 615 s against 606 s.
+
+## E125 — the expert store moves into Gufo (retained)
+
+The model-neutral store from E124 moves into Gufo core as an experimental
+API (`gufo/ext/experimental/expert_stream.hpp`, extension API 0.3.26), so
+other extensions can stream their experts without a copy of it. The
+extension keeps only its DeepSeek layout and policy (`runtime/expert_store.cpp`)
+and drops its own copy and its test, which Gufo now runs. In Gufo the store
+builds with core's flags, without this extension's `-ffast-math`; its
+eviction math (use decay, classes) could round differently.
+
+Both arms built against Gufo `eb9dea37`, the store arm on the branch that
+adds it; streamed `UD-IQ2_XXS` with the `MXFP8` Engram, DSpark and vision,
+one session, the same 53-request Pi coding-agent replay as E124 and a fresh
+server per arm. With `DS41_EXPERT_TRACE` and an 80 GiB cache, two base runs
+and one store run wrote the same trace (57,480 prepares, 838,500 router
+predictions, 16,961 tokens, 95.99% of routes hits), the same as E124's runs
+on Gufo `a27bbf98`: dropping fast-math changed no decision. Without tracing,
+in the order A B B A:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| base A1 | 100.4 | 98.37% | 24.5 | 155.6 | 39.1 |
+| Gufo store B1 | 101.0 | 98.43% | 23.9 | 155.6 | 35.3 |
+| Gufo store B2 | 100.5 | 98.38% | 24.5 | 156.2 | 35.3 |
+| base A2 | 100.9 | 98.43% | 23.9 | 156.2 | 35.2 |
+
+Every arm gave the same 53 replies and the same drafts (3,527 drafted, 2,951
+accepted). The cache took 100.4 or 100.9-101.0 GiB in both arms, following
+the memory free at startup (E124). A1, the first run after the builds, started
+slowly (ready in 43 s against 20-31 s) and prefilled 11% slower. With two
+sessions and `--context 32768`, Gufo's `conversation`, `long-context` and
+`cache` suites (disk restart included) passed. The arms' JSON is in
+[artifacts/2026-11-18-gufo-expert-stream/](artifacts/2026-11-18-gufo-expert-stream/).
 
 ## Backlog measurements without an E-number
 
