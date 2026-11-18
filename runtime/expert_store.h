@@ -17,7 +17,8 @@ struct ds41_weights;
 using ds41_expert_store_stats = gufo::expert_stream::Stats;
 using ds41_expert_overlap = gufo::expert_stream::Overlap;
 
-/* Available unified host memory, including reclaimable file cache. */
+/* Available unified host memory, including reclaimable file cache, as Gufo
+ * measures it (gufo::ext::HostAvailableBytes). */
 uint64_t ds41_expert_available_memory();
 
 /* The model and its shard descriptors outlive the store. cache_limit_bytes
@@ -36,14 +37,9 @@ void ds41_expert_store_destroy(ds41_expert_store* store);
  * tensors byte for byte; false (with a message) leaves reads unchanged. */
 bool ds41_expert_store_attach_tails(ds41_expert_store* store, const char* path);
 
-/* Re-sizes the cache from the memory free now, leaving reserve_bytes that it
- * never grows into, after allocating the prefetch stage: frees its newest
- * chunks, keeping the experts eviction ranks highest, when it is over the
- * new limit.
- * Call at startup once everything else long-lived is allocated, then seed
- * again to fill any room left. A nonzero cache_limit_bytes still bounds the
- * pool. False when the stage or the shrink failed. */
-bool ds41_expert_store_set_reserve(ds41_expert_store* store, uint64_t reserve_bytes);
+/* The underlying store, which serving sizes once the sessions exist
+ * (gufo::ext::TextRunnerExpertCacheClaim). */
+gufo::expert_stream::Store* ds41_expert_store_handle(ds41_expert_store* store);
 
 /* Prime the cache from the built-in V4.1 ranking or an optional
  * DS41_EXPERT_HISTOGRAM_V1 text file. Priming is startup work and does not
