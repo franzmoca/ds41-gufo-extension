@@ -69,27 +69,6 @@ if(ENGINE_ENABLE_HIP)
   target_include_directories(gufo_deepseek41flash_mmq
     SYSTEM PUBLIC ${DEEPSEEK41FLASH_MMQ_DIR})
   target_link_libraries(gufo_deepseek41flash_mmq PUBLIC hip::host roc::hipblas)
-
-  # Model-neutral SSD expert streaming (runtime/expert_stream). Its include
-  # path holds only its own directory and Gufo's public headers, so it cannot
-  # depend on DeepSeek code. Same flags as the device target: eviction
-  # decisions must not change with the move.
-  add_library(gufo_deepseek41flash_expert_stream STATIC
-    "${GUFO_EXTENSION_BUILD_ROOT}/runtime/expert_stream/store.cpp")
-  set_target_properties(gufo_deepseek41flash_expert_stream PROPERTIES
-    CXX_STANDARD 20
-    CXX_STANDARD_REQUIRED ON
-    POSITION_INDEPENDENT_CODE ON)
-  target_compile_definitions(gufo_deepseek41flash_expert_stream PRIVATE _GNU_SOURCE)
-  target_compile_options(gufo_deepseek41flash_expert_stream PRIVATE
-    -O3 -ffast-math -fno-finite-math-only)
-  target_include_directories(gufo_deepseek41flash_expert_stream PUBLIC
-    "$<BUILD_INTERFACE:${GUFO_EXTENSION_BUILD_ROOT}/runtime/expert_stream>")
-  target_include_directories(gufo_deepseek41flash_expert_stream SYSTEM PRIVATE
-    "${PROJECT_SOURCE_DIR}/include")
-  target_link_libraries(gufo_deepseek41flash_expert_stream
-    PUBLIC hip::host
-    PRIVATE gufo_ext_runtime gufo_ext_core gufo_ext_hip Threads::Threads)
 endif()
 
 # Device side: engine, decoder, DSpark, expert store, kernels, vision encoder
@@ -112,7 +91,6 @@ gufo_extension_target(
   LINK_LIBRARIES
     gufo_deepseek41flash
     gufo_deepseek41flash_mmq
-    gufo_deepseek41flash_expert_stream
     gufo_ext_runtime
     gufo_ext_core
     gufo_ext_cache
@@ -215,7 +193,7 @@ if(ENGINE_ENABLE_HIP)
   _deepseek41flash_test(vision_prompt "cpu;vision"
     LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash)
   foreach(name IN ITEMS attention candidate_mask draft_sampling expert_store
-                        expert_stream hc_state_pass mmq_typed steer)
+                        hc_state_pass mmq_typed steer)
     _deepseek41flash_test(${name} "hip;gpu;gfx1151;quality"
       LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash gufo_ext_hip)
   endforeach()
