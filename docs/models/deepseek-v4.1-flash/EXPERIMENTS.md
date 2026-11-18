@@ -157,6 +157,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E121](#e121--wait-for-the-decoder-reset-before-a-prompt-cache-restore-retained) | prompt cache | retained | Before a restore into a used session, the decoder reset zeroes its windows on the null stream without waiting, and the restore writes them on non-blocking transfer streams, so a late fill could zero restored rows. The reset now waits for the null stream. Greedy cache hits that part from the uncached reply at their second token: 16 / 70 before, 0 / 70 after. Restores 2.1-2.5 → 0.4-0.9 ms, decode unchanged. |
 | [E122](#e122--wait-for-queued-writes-before-a-prompt-cache-capture-retained) | prompt cache, DSpark | retained | Captures read on non-blocking transfer streams while the drafter's ring stores were still queued on the null stream. The checkpoint 3 tokens before the end of each prompt saved stale drafter rings every time, 36 of 36 over three servers with 4 and 16 hardware queues. With a wait for the null stream before each capture, 0 of those 24 checkpoints stale (0 of 136 drafter captures, two servers with 16 queues). Window, pool, rows and logits captures matched in every arm. |
 | [E123](#e123--one-prefill-batch-per-pass-beside-decoders-retained) | scheduling, prefill | retained | Gufo's extension API 0.3 has each runner declare the prompt tokens per pass beside decoding sessions; the 0.2 host used 512. An uncached 8.6-9.7K-token prompt arriving while another session decodes: 512 → 736 tok/s, 1,024 → 873, 2,048 → 1,001, 4,096 → 1,002. The decoding session's total stall 16.1 → 12.0 s, its longest 1.9 → 2.3 s, decode unchanged. Passes now take one prefill batch (2,048 by default). Outputs identical. |
+| [E124](#e124--a-model-neutral-expert-store-retained) | expert cache | retained | The expert cache, reads and prefetch become a model-neutral store (`runtime/expert_stream/`) described by a layout of pieces in files and a policy; DeepSeek's tensors, reserve, ranking and pruned builds stay in its adapter. Same expert trace as before on an agent replay, same replies and drafts; decode 156.3 → 155.8 s (A B B A). |
 
 ## Milestones
 
@@ -4657,6 +4658,54 @@ now declares its prefill batch (`--prefill-batch`, 2,048 by default) as
 `pass_tokens`. With the final build, one more 2,048 arm gave 999 tok/s and the
 same replies. The probe and the arms' JSON are in
 [artifacts/2026-11-17-scheduling-pass/](artifacts/2026-11-17-scheduling-pass/).
+
+## E124 — a model-neutral expert store (retained)
+
+SSD expert streaming was written for this model: its cache, reads and
+prefetch named DeepSeek's layer count, expert count, top-6 routing and
+gate/up/down tensors throughout. Other mixture-of-experts models store their
+experts differently: a fused gate_up and down tensor (Gemma 4), more experts
+and a different top-k (Qwen3.8 Flash-Next, 512 experts, top-10), or a dozen
+tensors per expert kept back to back (GLM 5.3 Flash EXL3), so each would
+need its own copy of the store.
+
+The store now lives in `runtime/expert_stream/` and knows nothing about the
+model. A caller describes each layer's experts as up to 16 pieces in files
+(expert `e` of a piece is at `offset + e * bytes`), the number of experts and
+the top-k, and sets the cache's sizing and eviction values; the defaults are
+this model's measured values (E104, E105). The store returns one device table
+per piece, as the kernels need. `runtime/expert_store.cpp` keeps the
+DeepSeek parts: the shard lookup of its expert tensors, the memory reserve
+(E113), the built-in ranking, pruned builds, histograms and the trace
+variable. The store builds as its own library without the model's headers.
+A new test runs it on a fused two-piece layout of 100 experts at top-8 with
+layers of two sizes, a one-piece layout, ranked seeding and invalid layouts;
+the extension's other tests pass unchanged.
+
+Streamed `UD-IQ2_XXS` with the `MXFP8` Engram, DSpark and vision, one
+session, replaying a recorded 53-request Pi coding-agent session against a
+fresh server per arm. With `DS41_EXPERT_TRACE` and an 80 GiB cache, two base
+runs and one refactor run wrote the same trace apart from timestamps, read
+waits and free memory: 57,480 prepares, 838,500 router predictions and
+16,961 tokens, 95.99% of routes hits (`tools/ds41/trace_compare.py`).
+Without tracing and with the cache sized from memory, in the order A B B A:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| base A1 | 100.4 | 98.37% | 24.5 | 156.3 | 35.5 |
+| refactor B1 | 101.0 | 98.42% | 23.9 | 155.7 | 36.6 |
+| refactor B2 | 101.1 | 98.43% | 23.8 | 155.8 | 35.2 |
+| base A2 | 100.4 | 98.37% | 24.5 | 156.3 | 35.3 |
+
+Every arm gave the same 53 replies and the same drafts (3,527 drafted, 2,951
+accepted). The refactor arms' 0.6 GiB larger cache follows the memory free at
+startup, not the code: four more startups in the order B A A B seeded 2.38,
+2.75, 2.47 and 2.65 GiB after the sessions and left 1.95-2.68 GiB free in
+both builds. The arms' JSON is in
+[artifacts/2026-11-18-expert-stream-store/](artifacts/2026-11-18-expert-stream-store/).
+With two sessions and `--context 32768`, Gufo's `conversation`,
+`long-context` and `cache` suites (disk restart included) passed at Gufo
+`a27bbf98`.
 
 ## Backlog measurements without an E-number
 
