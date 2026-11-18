@@ -2,8 +2,11 @@
 
 How the engine runs a backbone whose routed experts do not fit in memory:
 the dense weights stay resident and the routed experts are read from the
-SSD into a bounded cache. The code is `runtime/expert_store.{h,cpp}` and the
-expert paths of `runtime/v41_decode.cpp`. Measured results, including the
+SSD into a bounded cache. The cache, reads and prefetch are the model-neutral
+store in `runtime/expert_stream/`; `runtime/expert_store.{h,cpp}` describes
+DeepSeek's expert tensors to it and holds its DeepSeek policy (memory
+reserve, built-in ranking, pruned builds, histograms), and the decoder's
+expert paths are in `runtime/v41_decode.cpp`. Measured results, including the
 rejected designs, are in [EXPERIMENTS.md](EXPERIMENTS.md#ssd-expert-streaming-m3);
 open work is in [BACKLOG.md](BACKLOG.md).
 
