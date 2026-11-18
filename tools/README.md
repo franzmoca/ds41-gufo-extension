@@ -25,6 +25,7 @@ These replay an expert trace, which the engine writes with `DS41_EXPERT_TRACE=PA
 | `ds41/prefetch_fit.py` | Fit the simulator's costs to measured A/B ratios |
 | `ds41/evict_sim.py` | Compare eviction rules, LRU and the offline optimum |
 | `ds41/replay_sim.py` | Read stalls of the decoder's bounded replay |
+| `ds41/trace_compare.py` | Check that two `DS41_EXPERT_TRACE` files record the same cache decisions |
 | `ds41/rank_eval.py` | Evaluate the built-in expert ranking |
 | `ds41/route_occupancy.py` | Routed tile occupancy per layer |
 | `ds41/expert_histogram.py` | Build an expert-cache seed from oracle routes |
