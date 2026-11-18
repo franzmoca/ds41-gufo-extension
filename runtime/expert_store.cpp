@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
+#include <gufo/ext/host_budget.hpp>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -26,7 +27,7 @@ constexpr uint64_t kGiB = 1ull << 30;
  * cache is sized before the sessions exist (tools, benches): the shared batch
  * scratch (~1.4 GiB at 1M context), one session's FP4 state (~0.9 GiB at 1M)
  * and transient prefill peaks. The server sizes the cache after its sessions
- * instead (ds41_expert_store_set_reserve). */
+ * instead (gufo::ext::TextRunnerExpertCacheClaim). */
 constexpr uint64_t kReserve = 4 * kGiB;
 /* The batch scratch grows with the prefill batch: 0.55 GiB measured from
  * 2,048 to 4,096 tokens. Left out of the load seed's headroom, a 4,096-token
@@ -85,7 +86,7 @@ struct ds41_expert_store {
 };
 
 uint64_t ds41_expert_available_memory() {
-  return gufo::expert_stream::AvailableMemory();
+  return gufo::ext::HostAvailableBytes();
 }
 
 ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
@@ -172,9 +173,8 @@ bool ds41_expert_store_attach_tails(ds41_expert_store* store,
   return false;
 }
 
-bool ds41_expert_store_set_reserve(ds41_expert_store* store,
-                                   uint64_t reserve_bytes) {
-  return store && store->store->SetReserve(reserve_bytes);
+gufo::expert_stream::Store* ds41_expert_store_handle(ds41_expert_store* store) {
+  return store ? store->store.get() : nullptr;
 }
 
 bool ds41_expert_store_seed_default(ds41_expert_store* store) {

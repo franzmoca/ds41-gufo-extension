@@ -2205,18 +2205,8 @@ bool ds41_engine_has_image_bias(const ds41_engine* e) {
     return e && e->image_bias;
 }
 
-/* Free memory the expert cache leaves when it is sized after the sessions:
- * buffers the first prompt still allocates (~0.8 GiB measured at 1, 2 and 4
- * sessions), transient prefill peaks (~0.3-0.6 GiB) and margin against swap. */
-static constexpr uint64_t kWarmHeadroom = 2ull << 30;
-
-int ds41_engine_fit_experts(ds41_engine* e, uint64_t pending_bytes) {
-  if (!e || !e->expert_store)
-    return 1;
-  if (!ds41_expert_store_set_reserve(e->expert_store, kWarmHeadroom + pending_bytes))
-    fprintf(stderr, "ds41: unable to fit the expert cache to the memory left after the sessions\n");
-  seed_experts(e);
-  return 0;
+gufo::expert_stream::Store* ds41_engine_expert_store(ds41_engine* e) {
+  return e ? ds41_expert_store_handle(e->expert_store) : nullptr;
 }
 
 bool ds41_engine_has_dspark(const ds41_engine* e) {
