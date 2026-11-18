@@ -1,7 +1,7 @@
-/* DeepSeek V4.1 Flash's use of the model-neutral expert store
- * (expert_stream/store.h): where the routed experts are in the GGUF shards,
- * the memory the engine keeps for itself, the built-in ranking that warms
- * the cache, expert-pruned builds and histogram files. */
+/* DeepSeek V4.1 Flash's use of Gufo's experimental expert store
+ * (gufo/ext/experimental/expert_stream.hpp): where the routed experts are in
+ * the GGUF shards, the memory the engine keeps for itself, the built-in
+ * ranking that warms the cache, expert-pruned builds and histogram files. */
 #include "expert_store.h"
 
 #include <algorithm>
@@ -76,7 +76,7 @@ static_assert(valid_pruned(kGsqRcoCoder));
 }  // namespace
 
 struct ds41_expert_store {
-  std::unique_ptr<expert_stream::Store> store;
+  std::unique_ptr<gufo::expert_stream::Store> store;
   uint32_t n_expert = DS41_MAX_EXPERT;  // routed experts per layer in the GGUF
   /* For a known expert-pruned build, its kept original experts (seeding maps
    * the built-in ranking through them); null for the full model or an
@@ -85,7 +85,7 @@ struct ds41_expert_store {
 };
 
 uint64_t ds41_expert_available_memory() {
-  return expert_stream::AvailableMemory();
+  return gufo::expert_stream::AvailableMemory();
 }
 
 ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
@@ -111,7 +111,7 @@ ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
   }
   /* Each layer's gate, up and down expert tensors, found in the shard that
    * holds them. */
-  expert_stream::Layout layout;
+  gufo::expert_stream::Layout layout;
   layout.experts = owner->n_expert;
   layout.top_k = DS41_N_EXPERT_USED;
   layout.pieces = 3;
@@ -125,7 +125,7 @@ ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
     for (const ds41_tensor* t : tensors) {
       if (!t || !t->bytes || t->bytes % owner->n_expert)
         return nullptr;
-      expert_stream::Piece piece;
+      gufo::expert_stream::Piece piece;
       piece.bytes = t->bytes / owner->n_expert;
       for (uint32_t s = 0; s < model->n_shards; ++s) {
         const uint64_t start = model->shard_offset[s];
@@ -142,7 +142,7 @@ ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
       layout.layers[layer].push_back(piece);
     }
   }
-  expert_stream::Policy policy;
+  gufo::expert_stream::Policy policy;
   policy.cache_limit_bytes = cache_limit_bytes;
   policy.reserve_bytes = kReserve;
   if (prefill_batch > kReserveBatch)
@@ -150,7 +150,7 @@ ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
   if (const char* path = std::getenv("DS41_EXPERT_TRACE"); path && *path)
     policy.trace_path = path;
   policy.log_tag = "ds41";
-  owner->store = expert_stream::Store::Create(layout, policy);
+  owner->store = gufo::expert_stream::Store::Create(layout, policy);
   if (!owner->store)
     return nullptr;
   return owner.release();
@@ -182,7 +182,7 @@ bool ds41_expert_store_seed_default(ds41_expert_store* store) {
     return false;
   /* A pruned build takes the ranking's kept experts in the same order,
    * renumbered; an unknown pruned build seeds without a ranking. */
-  std::vector<expert_stream::Ranked> ranked;
+  std::vector<gufo::expert_stream::Ranked> ranked;
   if (store->n_expert == DS41_MAX_EXPERT || store->pruned) {
     constexpr uint16_t kDropped = 0xffff;
     std::array<std::array<uint16_t, DS41_MAX_EXPERT>, DS41_N_LAYER> own;
@@ -219,7 +219,7 @@ bool ds41_expert_store_seed(ds41_expert_store* store, const char* path) {
   if (!std::getline(in, magic) || magic != "DS41_EXPERT_HISTOGRAM_V1")
     return false;
   std::array<std::array<bool, DS41_MAX_EXPERT>, DS41_N_LAYER> seen{};
-  std::vector<expert_stream::Ranked> ranked;
+  std::vector<gufo::expert_stream::Ranked> ranked;
   std::string line;
   while (std::getline(in, line)) {
     uint32_t layer = 0, expert = 0;
@@ -237,7 +237,8 @@ bool ds41_expert_store_seed(ds41_expert_store* store, const char* path) {
   if (!in.eof())
     return false;
   std::sort(ranked.begin(), ranked.end(),
-            [](const expert_stream::Ranked& a, const expert_stream::Ranked& b) {
+            [](const gufo::expert_stream::Ranked& a,
+               const gufo::expert_stream::Ranked& b) {
               if (a.count != b.count)
                 return a.count > b.count;
               return a.layer != b.layer ? a.layer < b.layer

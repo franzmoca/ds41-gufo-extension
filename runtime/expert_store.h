@@ -5,17 +5,17 @@
 
 #include <hip/hip_runtime_api.h>
 
-#include "expert_stream/store.h"
+#include <gufo/ext/experimental/expert_stream.hpp>
 
 struct ds41_expert_store;
 struct ds41_model;
 struct ds41_weights;
 
-/* The model-neutral store's statistics and overlap view (expert_stream/store.h).
- * Each expert has three pieces, so an overlap's table holds the gate, up and
- * down tables, in that order. */
-using ds41_expert_store_stats = expert_stream::Stats;
-using ds41_expert_overlap = expert_stream::Overlap;
+/* The statistics and overlap view of Gufo's experimental expert store
+ * (gufo/ext/experimental/expert_stream.hpp). Each expert has three pieces,
+ * so an overlap's table holds the gate, up and down tables, in that order. */
+using ds41_expert_store_stats = gufo::expert_stream::Stats;
+using ds41_expert_overlap = gufo::expert_stream::Overlap;
 
 /* Available unified host memory, including reclaimable file cache. */
 uint64_t ds41_expert_available_memory();
