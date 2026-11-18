@@ -192,6 +192,12 @@
       ],
       "role": "test"
     },
+    "deepseek41flash_expert_stream_test": {
+      "requires": [
+        "testing"
+      ],
+      "role": "test"
+    },
     "deepseek41flash_hc_state_pass_test": {
       "requires": [
         "testing"
