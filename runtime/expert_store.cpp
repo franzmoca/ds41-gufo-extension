@@ -133,12 +133,12 @@ ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
         if (t->abs_offset >= start &&
             t->abs_offset - start <= model->shard_size[s] &&
             t->bytes <= model->shard_size[s] - (t->abs_offset - start)) {
-          piece.fd = model->shard_fd[s];
+          piece.file = model->shard_fd[s];
           piece.offset = t->abs_offset - start;
           break;
         }
       }
-      if (piece.fd < 0)
+      if (piece.file == gufo::platform::kInvalidFile)
         return nullptr;
       layout.layers[layer].push_back(piece);
     }
