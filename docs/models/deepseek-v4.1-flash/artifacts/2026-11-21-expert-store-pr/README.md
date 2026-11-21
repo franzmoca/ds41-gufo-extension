@@ -19,3 +19,18 @@ store (B, Gufo `4e529f3`).
   runs.
 
 Prompts and replies are left out.
+
+`arms-residence.json`: the same replay after the store moved the cache from
+managed memory into device pages and fills it once, at `Fit`. B is the branch
+on Gufo `3e03c623` (managed memory, release without moving experts), G on
+Gufo `82483833` (device pages, one fill).
+
+- `replay`: untraced in the order B G G B, then one traced run of each with
+  no cache cap. Each run adds the prefetched and dropped bytes and its
+  `expert seed` lines.
+- `startup`: five fresh starts in the order F G G F G, F being Gufo
+  `aaffdb12` (device pages, seeded at load and again at `Fit`): the seed
+  lines, `expert_cache_grant`, the prompt cache's `backing_prepared`, and
+  MemAvailable after 20 s idle.
+- `pressure`: G with a 4 GiB memory hog, as above, plus the server's swap
+  after the release.

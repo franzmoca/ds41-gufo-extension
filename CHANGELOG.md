@@ -19,6 +19,11 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   idle relief released the RAM prompt cache at startup
   ([E127](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e127--the-expert-store-as-proposed-to-gufo-retained)).
   Needs extension API 0.3.38.
+* **expert streaming:** the streamed expert cache lives in device pages the
+  host cannot swap and is filled once, when its size is known: it starts at
+  the same size every time, and gives memory back under host pressure in
+  about a second instead of up to a minute
+  ([E127](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e127--the-expert-store-as-proposed-to-gufo-retained)).
 
 ### Fixes
 
