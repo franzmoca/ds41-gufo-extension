@@ -47,7 +47,7 @@ Built on upstream Gufo `a27bbf98`, the same pin as 0.3.0; needs extension API
   reserve, which the cache leaves unused on purpose. Without this, Gufo's
   idle relief released the RAM prompt cache at startup
   ([E127](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e127--the-expert-store-as-proposed-to-gufo-retained)).
-  Needs extension API 0.3.38.
+  Needs extension API 0.3.39.
 * **expert streaming:** the streamed expert cache lives in device pages the
   host cannot swap and is filled once, when its size is known: it starts at
   the same size every time, and gives memory back under host pressure in
