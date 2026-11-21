@@ -160,6 +160,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E124](#e124--a-model-neutral-expert-store-retained) | expert cache | retained | The expert cache, reads and prefetch become a model-neutral store (`runtime/expert_stream/`) described by a layout of pieces in files and a policy; DeepSeek's tensors, reserve, ranking and pruned builds stay in its adapter. Same expert trace as before on an agent replay, same replies and drafts; decode 156.3 → 155.8 s (A B B A). |
 | [E125](#e125--the-expert-store-moves-into-gufo-retained) | expert cache | retained | The model-neutral expert store moves into Gufo as an experimental API (extension API 0.3.26), built without this extension's fast-math; the extension keeps its DeepSeek layout and policy. Same expert trace as before, same replies and drafts; decode 155.6/156.2 s in both arms (A B B A). |
 | [E126](#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained) | expert cache | retained | Gufo's serving sizes the expert cache from a runner claim (headroom, prompt-cache share per session) instead of the runner's backing hook (extension API 0.3.27). Same trace, replies and drafts; decode 155.0/155.3 s against 155.3/155.9 s (A B B A). With streamed experts the prompt cache holds what its backing commits at startup: reserving more host memory for it left the memory idle. |
+| [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). Release under pressure drops experts instead of moving them, and the cache lives in device pages, filled once at `Fit`: 101.2 GiB at each of three starts, a 4 GiB-hog release in 1.33 s instead of 67 s, the same replies, decode within noise. |
 | [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). |
 | [E129](#e129--keep-the-expert-cache-above-gufos-host-reserve-retained) | expert cache, prompt cache | retained | Gufo past #1275 gives the RAM prompt cache's memory back whenever less than 4 GiB is available; a streamed expert cache that leaves 1-2 GiB lost the whole prompt cache at the first idle moment, and every later turn prefilled its whole prompt (agent session 1,924 s instead of 615 s). The cache now stops at 4.5 GiB free (5.5 GiB at startup), which lets `main` pin Gufo `e7e38411` with #1326 and #1327 (#13). Coding-agent replay A B B A: 97.0/97.3 GiB instead of 100.9/100.8, route hits 98.08/98.10% instead of 98.42/98.41%, decode 153.4/152.5 s against 152.6/156.1 s, prefill 36.5/36.0 s against 35.2/35.2 s. |
 
@@ -4895,6 +4896,25 @@ replies differ (re-prefilled prompts; A1 and A2 agree). The extra prefill
 also explains A's route hits and reads per token. `main` must not move its
 Gufo pin past #1275 without this change; it is pinned at `a27bbf98`, before it.
 
+Against what users run today, `main` at its pin `a27bbf98` (C, built
+unchanged), in the order C B B C:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| main at its pin C1 | 100.6 | 98.40% | 24.3 | 156.3 | 35.6 |
+| Gufo store B3 | 100.9 | 98.44% | 23.6 | 153.3 | 35.7 |
+| Gufo store B4 | 101.0 | 98.44% | 23.6 | 153.7 | 35.3 |
+| main at its pin C2 | 101.0 | 98.43% | 23.9 | 155.7 | 35.3 |
+
+C gave E126's replies and drafts (3,527 drafted, 2,951 accepted). B differs
+from it in two replies: on request 44 B resumed from 9,918 cached prompt
+tokens where C resumed from 9,921, so it prefilled three tokens C read from
+its checkpoint and wrote a different tool call, which request 45 continues.
+A, `main` on Gufo `9cde650f`, matched B there in the traced runs, so the
+difference comes with the prompt-cache changes in Gufo between the pins
+(which one was not traced), not with the store. This comparison spans the whole pin update, so it does
+not attribute the 2% faster decode to the store.
+
 Under pressure, B at one session after one short request, with a memory hog
 started while idle (2.72 GiB available before it):
 
@@ -4905,8 +4925,59 @@ started while idle (2.72 GiB available before it):
 
 Neither run released the prompt cache, and the request repeated after the
 restore gave the same reply. With the 4 GiB hog the host had 0.21 GiB
-available and the release took 67 s, against 108 ms at the milder shortfall;
-where that time went was not measured.
+available and the release took 67 s, against 108 ms at the milder shortfall.
+
+The 67 s had two causes. The release moved the experts it kept out of the
+freed chunks, and the cache, in managed memory, had been partly swapped out,
+so the moves read it back from swap. Gufo `3e03c623` drops the freed chunks'
+experts instead: 3.3 s at the 4 GiB hog, 99 ms with swap off. Gufo then keeps
+the cache in 2 MiB device pages (`hipMemCreate`), which the kernel does not
+swap, with each size class's slots packed in one reserved address range, and
+(`82483833`) fills it once, at `Fit`, from a ranking in its `Policy`. The
+first device-page version also seeded at load into a guessed share of memory
+and again at `Fit`; its cache came out 0.25-0.45 GiB smaller than managed
+memory's, by a different amount at each start. This branch builds the
+ranking (histogram or built-in) when it creates the store; `gufo prompt`,
+`gufo bench` and the probe call `Fit` themselves after loading, leaving the
+same headroom the load-time seed did.
+
+Five fresh starts, F being the device-page version that seeded twice
+(`aaffdb12`) and G the single fill:
+
+| Start | Arm | Seeded | Expert cache (GiB) | Prompt-cache backing | MemAvailable at idle (GiB) |
+| ---: | --- | --- | ---: | ---: | ---: |
+| 1 | F | 93.72 at load, 6.63 at `Fit` | 100.35 | 948 of 948 MB | 2.53 |
+| 2 | G | at `Fit`, in 26.7 s | 101.23 | 948 of 948 MB | 1.51 |
+| 3 | G | at `Fit`, in 23.9 s | 101.20 | 948 of 948 MB | 1.51 |
+| 4 | F | 93.72 at load, 7.00 at `Fit` | 100.72 | 948 of 948 MB | 2.17 |
+| 5 | G | at `Fit`, in 25.1 s | 101.25 | 948 of 948 MB | 1.57 |
+
+The replay, B the branch on managed memory (Gufo `3e03c623`) and G, in the
+order B G G B:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Prefetched (GiB) | Decode (s) | Prefill (s) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| managed B1 | 100.8 | 98.42% | 23.6 | 219.6 | 149.0 | 34.9 |
+| device pages G1 | 100.6 | 98.40% | 24.9 | 238.0 | 153.1 | 35.6 |
+| device pages G2 | 101.0 | 98.43% | 24.3 | 232.1 | 152.7 | 35.4 |
+| managed B2 | 100.9 | 98.43% | 23.7 | 222.6 | 153.0 | 35.2 |
+
+All four gave the same replies and drafts (3,519 drafted, 2,939 accepted).
+Decode is inconclusive: G's 152.9 s average sits within B's 4 s spread, and
+B1 ran first after idle. G's extra reads are all prefetch: total reads less
+prefetch leave 116-118 GiB of demand reads in every run, dropped prefetch
+grew by under 1 GiB, and host wait was 9.3 ms per token in all four. Traced
+(router prediction off) with no cache cap, G read 15.5 MiB per token against
+B's 15.7, and the two caches held the same experts but 20 only in B and 51
+only in G, of about 10,600. Prefetch reads only while no demand read runs,
+so G fitting in more of it is a timing effect; which phase it falls in was
+not split.
+
+Under the 4 GiB hog (0.29 GiB available), G released 3.00 GB in 1.33 s and
+restored it, the repeated request gave the same reply, and none of the
+server's 135 MiB in swap was cache. Device pages cost about 330 MiB of kernel
+memory for the 51,000 pages of the cache, against about 200 MiB of page
+tables for managed memory. These runs are in `arms-residence.json`.
 With two sessions and `--context 32768`, Gufo's `conversation`,
 `long-context` and `cache` suites (disk restart included) passed on B
 (16 cases). The arms' JSON is in
