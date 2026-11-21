@@ -160,6 +160,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E124](#e124--a-model-neutral-expert-store-retained) | expert cache | retained | The expert cache, reads and prefetch become a model-neutral store (`runtime/expert_stream/`) described by a layout of pieces in files and a policy; DeepSeek's tensors, reserve, ranking and pruned builds stay in its adapter. Same expert trace as before on an agent replay, same replies and drafts; decode 156.3 → 155.8 s (A B B A). |
 | [E125](#e125--the-expert-store-moves-into-gufo-retained) | expert cache | retained | The model-neutral expert store moves into Gufo as an experimental API (extension API 0.3.26), built without this extension's fast-math; the extension keeps its DeepSeek layout and policy. Same expert trace as before, same replies and drafts; decode 155.6/156.2 s in both arms (A B B A). |
 | [E126](#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained) | expert cache | retained | Gufo's serving sizes the expert cache from a runner claim (headroom, prompt-cache share per session) instead of the runner's backing hook (extension API 0.3.27). Same trace, replies and drafts; decode 155.0/155.3 s against 155.3/155.9 s (A B B A). With streamed experts the prompt cache holds what its backing commits at startup: reserving more host memory for it left the memory idle. |
+| [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). |
 | [E129](#e129--keep-the-expert-cache-above-gufos-host-reserve-retained) | expert cache, prompt cache | retained | Gufo past #1275 gives the RAM prompt cache's memory back whenever less than 4 GiB is available; a streamed expert cache that leaves 1-2 GiB lost the whole prompt cache at the first idle moment, and every later turn prefilled its whole prompt (agent session 1,924 s instead of 615 s). The cache now stops at 4.5 GiB free (5.5 GiB at startup), which lets `main` pin Gufo `e7e38411` with #1326 and #1327 (#13). Coding-agent replay A B B A: 97.0/97.3 GiB instead of 100.9/100.8, route hits 98.08/98.10% instead of 98.42/98.41%, decode 153.4/152.5 s against 152.6/156.1 s, prefill 36.5/36.0 s against 35.2/35.2 s. |
 
 ## Milestones
@@ -4843,6 +4844,73 @@ grant's log line now reports the backing actually committed beside the
 budget. At one session the backing commits its whole 0.88 GiB. The arms'
 JSON is in
 [artifacts/2026-11-18-expert-cache-claim/](artifacts/2026-11-18-expert-cache-claim/).
+
+## E127 — the expert store as proposed to Gufo (retained)
+
+The store, its serving claim (E125, E126) and three later changes, rebased
+onto Gufo `9cde650f` and proposed upstream as one pull request (extension API
+0.3.38, gufo-org/gufo#1286):
+
+- **Versioned trace.** The store writes trace version 2 (a magic, the layout,
+  the policy and the seeded cache), and Gufo's `tools/expert_stream/` reads
+  it with the replays. This extension drops its own reader and simulators;
+  its remaining trace tools find Gufo's reader through `GUFO_SRC`.
+- **Platform reads.** A layout piece holds Gufo's `platform::PlatformFile`,
+  and the store reopens it for unbuffered reads where the platform allows
+  them.
+- **Host pressure.** Gufo's idle relief (#1275) measures the host against a
+  4 GiB reserve. A fitted expert cache leaves 2-3 GiB free on purpose, so
+  right after startup the relief released the prompt cache's whole backing.
+  While experts stream, serving now measures pressure against the store's
+  1 GiB floor. Below it, the store frees its coldest chunks first
+  (`Store::Release`, logged as `expert_cache_release`), then the prompt
+  cache gives memory back; once the floor, the released bytes and 256 MiB
+  are available again, the cache may regrow to its grant (`Store::Restore`,
+  `expert_cache_restore`).
+
+Both arms built with `nix build` against Gufo `9cde650f`: A is extension
+`main` (`330fcca`, its own store), B this branch on Gufo's store (Gufo
+`4e529f3`). Streamed `UD-IQ2_XXS` with the `MXFP8` Engram, DSpark and
+vision, one session, the 53-request Pi coding-agent replay, a fresh server
+per run. With `DS41_EXPERT_TRACE` and an 80 GiB cache, both arms wrote the
+same trace (`trace_compare.py` across versions 1 and 2: 56,080 prepares,
+817,850 router predictions, 16,926 tokens, 96.02% of routes hits), the same
+53 replies and the same drafts (3,519 drafted, 2,939 accepted), with all
+493,146 expert reads direct. These totals moved from E125's together in both
+arms, with the newer `main` and Gufo. Without tracing, in the order A B B A:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| main A1 | 100.8 | 99.55% | 4.2 | 155.2 | 204.7 |
+| Gufo store B1 | 100.9 | 98.44% | 23.7 | 153.1 | 35.3 |
+| Gufo store B2 | 101.0 | 98.44% | 23.6 | 153.3 | 35.5 |
+| main A2 | 101.1 | 99.56% | 4.1 | 154.8 | 199.8 |
+
+The B runs gave the traced runs' replies and drafts. The A runs did not:
+as the server started listening, with 2.45 GiB available against the
+4 GiB reserve, the relief released the prompt cache's 0.95 GiB backing
+(`host_pressure_release`), so the replay reused 159,768 cached prompt tokens
+instead of 362,070, prefilled 200-205 s instead of 35 s, and 22 of its 53
+replies differ (re-prefilled prompts; A1 and A2 agree). The extra prefill
+also explains A's route hits and reads per token. `main` must not move its
+Gufo pin past #1275 without this change; it is pinned at `a27bbf98`, before it.
+
+Under pressure, B at one session after one short request, with a memory hog
+started while idle (2.72 GiB available before it):
+
+| Hog | Available with the hog | Released | Release | Available after | Restored |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 2 GiB | 0.67 GiB | 2.69 GB | 108 ms | 3.08 GiB | 2.69 GB |
+| 4 GiB | 0.21 GiB | 2.38 GB | 67 s | 0.12 GiB | 2.39 GB |
+
+Neither run released the prompt cache, and the request repeated after the
+restore gave the same reply. With the 4 GiB hog the host had 0.21 GiB
+available and the release took 67 s, against 108 ms at the milder shortfall;
+where that time went was not measured.
+With two sessions and `--context 32768`, Gufo's `conversation`,
+`long-context` and `cache` suites (disk restart included) passed on B
+(16 cases). The arms' JSON is in
+[artifacts/2026-11-21-expert-store-pr/](artifacts/2026-11-21-expert-store-pr/).
 
 ## Backlog measurements without an E-number
 

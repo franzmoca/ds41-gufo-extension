@@ -41,6 +41,13 @@ Built on upstream Gufo `a27bbf98`, the same pin as 0.3.0; needs extension API
   (1 GiB with `--cache-disk`, 3 GiB without) is now per session
   ([E126](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained)).
   Needs extension API 0.3.27.
+* **expert streaming:** under host pressure the streamed expert cache gives
+  memory back first and regrows once it is free again, and pressure is
+  measured against the store's 1 GiB floor instead of Gufo's 4 GiB host
+  reserve, which the cache leaves unused on purpose. Without this, Gufo's
+  idle relief released the RAM prompt cache at startup
+  ([E127](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e127--the-expert-store-as-proposed-to-gufo-retained)).
+  Needs extension API 0.3.38.
 
 ### Fixes
 

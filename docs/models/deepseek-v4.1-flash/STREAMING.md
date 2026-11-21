@@ -86,6 +86,13 @@ only the resident tensors, so the dense weights go through the device heap.
   RAM prompt cache keeps what its backing committed by then: growing it
   later needs 4 GiB of device heap free, which the fitted expert cache does
   not leave (E126); the disk cache serves the rest.
+- **Host pressure.** The fitted cache leaves 2-3 GiB free on purpose, so
+  while experts stream Gufo measures host pressure against the store's
+  1 GiB floor rather than its 4 GiB host reserve. Below the floor, the idle
+  server frees the cache's coldest chunks first, then prompt-cache memory,
+  and refuses new requests below half the floor. Once the floor, the
+  released bytes and 256 MiB are available again, the cache may regrow to
+  its grant (E127).
 
 ## A layer's prepare
 
