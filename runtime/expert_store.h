@@ -22,30 +22,35 @@ using ds41_expert_overlap = gufo::expert_stream::Overlap;
 uint64_t ds41_expert_available_memory();
 
 /* The model and its shard descriptors outlive the store. cache_limit_bytes
- * bounds the pool when nonzero; zero sizes it from available device memory.
- * prefill_batch is the engine's batch size (0: the default): the headroom
- * left for the sessions grows with it. */
-ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
-                                            const ds41_weights* weights,
-                                            uint64_t cache_limit_bytes = 0,
-                                            uint32_t prefill_batch = 0);
+ * bounds the cache when nonzero. The cache is empty until it is sized and
+ * filled: by serving once the sessions exist
+ * (gufo::ext::TextRunnerExpertCacheClaim), or by
+ * ds41_expert_store_fit_available. It is filled from histogram_path, a
+ * DS41_EXPERT_HISTOGRAM_V1 text file, when that exists and parses, otherwise
+ * from the built-in V4.1 ranking, then with the experts the ranking leaves
+ * out. prefill_batch is the engine's batch size (0: the default): the
+ * headroom fit_available leaves grows with it. */
+ds41_expert_store* ds41_expert_store_create(
+    const ds41_model* model, const ds41_weights* weights,
+    uint64_t cache_limit_bytes = 0, uint32_t prefill_batch = 0,
+    const char* histogram_path = nullptr);
 void ds41_expert_store_destroy(ds41_expert_store* store);
 
 /* Splits every expert read between the model's GGUF and a tails file built by
  * tools/ds41/pack_expert_tails.py, normally on a second drive, so both read
- * at once. Call before seeding. The file must match this model's expert
- * tensors byte for byte; false (with a message) leaves reads unchanged. */
+ * at once. Call before the cache is filled. The file must match this model's
+ * expert tensors byte for byte; false (with a message) leaves reads
+ * unchanged. */
 bool ds41_expert_store_attach_tails(ds41_expert_store* store, const char* path);
 
 /* The underlying store, which serving sizes once the sessions exist
  * (gufo::ext::TextRunnerExpertCacheClaim). */
 gufo::expert_stream::Store* ds41_expert_store_handle(ds41_expert_store* store);
 
-/* Prime the cache from the built-in V4.1 ranking or an optional
- * DS41_EXPERT_HISTOGRAM_V1 text file. Priming is startup work and does not
- * count as inference in the statistics. */
-bool ds41_expert_store_seed_default(ds41_expert_store* store);
-bool ds41_expert_store_seed(ds41_expert_store* store, const char* path);
+/* Sizes and fills the cache from the memory available now, leaving headroom
+ * for the sessions and their batch scratch: for hosts without serving
+ * (gufo prompt, gufo bench, probes), right after load. */
+bool ds41_expert_store_fit_available(ds41_expert_store* store);
 
 /* Routes are device [n_tokens][6]. The returned gate, up and down tables map
  * each expert index to its device weights and stay valid until the next call.

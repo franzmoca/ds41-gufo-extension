@@ -4,6 +4,8 @@
  * ranking that warms the cache, expert-pruned builds and histogram files. */
 #include "expert_store.h"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <array>
 #include <cstdint>
@@ -30,9 +32,10 @@ constexpr uint64_t kGiB = 1ull << 30;
  * instead (gufo::ext::TextRunnerExpertCacheClaim). */
 constexpr uint64_t kReserve = 4 * kGiB;
 /* The batch scratch grows with the prefill batch: 0.55 GiB measured from
- * 2,048 to 4,096 tokens. Left out of the load seed's headroom, a 4,096-token
- * batch took the device heap under the reserve the prompt cache's backing
- * must keep, and the server ran without a prompt cache (E113). */
+ * 2,048 to 4,096 tokens. Left out of the headroom of the seed the server once
+ * ran at load, a 4,096-token batch took the device heap under the reserve the
+ * prompt cache's backing must keep, and the server ran without a prompt cache
+ * (E113). */
 constexpr uint64_t kReserveBatch = 2048;
 constexpr uint64_t kReservePerToken = 320 << 10;
 
@@ -79,11 +82,86 @@ static_assert(valid_pruned(kGsqRcoCoder));
 struct ds41_expert_store {
   std::unique_ptr<gufo::expert_stream::Store> store;
   uint32_t n_expert = DS41_MAX_EXPERT;  // routed experts per layer in the GGUF
-  /* For a known expert-pruned build, its kept original experts (seeding maps
-   * the built-in ranking through them); null for the full model or an
-   * unknown pruned build. */
+  /* For a known expert-pruned build, its kept original experts (the built-in
+   * ranking maps through them); null for the full model or an unknown pruned
+   * build. */
   const PrunedBuild* pruned = nullptr;
+  /* Free memory ds41_expert_store_fit_available leaves for the sessions. */
+  uint64_t headroom = 0;
 };
+
+namespace {
+
+using gufo::expert_stream::Ranked;
+
+/* The built-in V4.1 ranking; a pruned build takes its kept experts in the
+ * same order, renumbered, and an unknown pruned build has none. */
+std::vector<Ranked> default_ranking(const ds41_expert_store& store,
+                                    const char** source) {
+  std::vector<Ranked> ranked;
+  if (store.n_expert == DS41_MAX_EXPERT || store.pruned) {
+    constexpr uint16_t kDropped = 0xffff;
+    std::array<std::array<uint16_t, DS41_MAX_EXPERT>, DS41_N_LAYER> own;
+    for (uint32_t l = 0; l < DS41_N_LAYER; ++l) {
+      own[l].fill(kDropped);
+      for (uint32_t j = 0; j < store.n_expert; ++j)
+        own[l][store.pruned ? store.pruned->kept[l * store.n_expert + j] : j] =
+            static_cast<uint16_t>(j);
+    }
+    ranked.reserve(kDefaultExpertRank.size());
+    for (size_t i = 0; i < kDefaultExpertRank.size(); ++i) {
+      const uint32_t layer = kDefaultExpertRank[i] / DS41_MAX_EXPERT;
+      const uint16_t expert =
+          own[layer][kDefaultExpertRank[i] % DS41_MAX_EXPERT];
+      if (expert != kDropped)
+        ranked.push_back(
+            {layer, expert,
+             static_cast<uint64_t>(kDefaultExpertRank.size() - i)});
+    }
+  }
+  *source = !store.pruned
+                ? (ranked.empty() ? "no ranking for this expert-pruned build"
+                                  : "built-in V4.1 ranking")
+                : "built-in V4.1 ranking of the kept experts";
+  return ranked;
+}
+
+/* A DS41_EXPERT_HISTOGRAM_V1 text file (tools/ds41/expert_histogram.py),
+ * most counted first; false when it is malformed. */
+bool histogram_ranking(const ds41_expert_store& store, const char* path,
+                       std::vector<Ranked>* out) {
+  std::ifstream in(path);
+  std::string magic;
+  if (!std::getline(in, magic) || magic != "DS41_EXPERT_HISTOGRAM_V1")
+    return false;
+  std::array<std::array<bool, DS41_MAX_EXPERT>, DS41_N_LAYER> seen{};
+  std::vector<Ranked> ranked;
+  std::string line;
+  while (std::getline(in, line)) {
+    uint32_t layer = 0, expert = 0;
+    uint64_t count = 0;
+    std::string extra;
+    std::istringstream row(line);
+    if (!(row >> layer >> expert >> count) || (row >> extra))
+      return false;
+    if (layer >= DS41_N_LAYER || expert >= store.n_expert || !count ||
+        seen[layer][expert])
+      return false;
+    seen[layer][expert] = true;
+    ranked.push_back({layer, expert, count});
+  }
+  if (!in.eof())
+    return false;
+  std::sort(ranked.begin(), ranked.end(), [](const Ranked& a, const Ranked& b) {
+    if (a.count != b.count)
+      return a.count > b.count;
+    return a.layer != b.layer ? a.layer < b.layer : a.expert < b.expert;
+  });
+  *out = std::move(ranked);
+  return true;
+}
+
+}  // namespace
 
 uint64_t ds41_expert_available_memory() {
   return gufo::ext::HostAvailableBytes();
@@ -92,7 +170,8 @@ uint64_t ds41_expert_available_memory() {
 ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
                                             const ds41_weights* weights,
                                             uint64_t cache_limit_bytes,
-                                            uint32_t prefill_batch) {
+                                            uint32_t prefill_batch,
+                                            const char* histogram_path) {
   if (!model || !weights || model->n_shards > DS41_MAX_SHARDS ||
       weights->n_expert < DS41_N_EXPERT_USED ||
       weights->n_expert > DS41_MAX_EXPERT)
@@ -145,9 +224,23 @@ ds41_expert_store* ds41_expert_store_create(const ds41_model* model,
   }
   gufo::expert_stream::Policy policy;
   policy.cache_limit_bytes = cache_limit_bytes;
-  policy.reserve_bytes = kReserve;
+  owner->headroom = kReserve;
   if (prefill_batch > kReserveBatch)
-    policy.reserve_bytes += (prefill_batch - kReserveBatch) * kReservePerToken;
+    owner->headroom += (prefill_batch - kReserveBatch) * kReservePerToken;
+  /* The histogram when it parses, otherwise the built-in ranking. */
+  const char* source = nullptr;
+  if (histogram_path && access(histogram_path, F_OK) == 0) {
+    if (histogram_ranking(*owner, histogram_path, &policy.ranking))
+      source = histogram_path;
+    else
+      fprintf(stderr,
+              "ds41: failed to load expert histogram %s; using the built-in "
+              "ranking\n",
+              histogram_path);
+  }
+  if (!source)
+    policy.ranking = default_ranking(*owner, &source);
+  policy.ranking_source = source;
   if (const char* path = std::getenv("DS41_EXPERT_TRACE"); path && *path)
     policy.trace_path = path;
   policy.log_tag = "ds41";
@@ -177,74 +270,13 @@ gufo::expert_stream::Store* ds41_expert_store_handle(ds41_expert_store* store) {
   return store ? store->store.get() : nullptr;
 }
 
-bool ds41_expert_store_seed_default(ds41_expert_store* store) {
+bool ds41_expert_store_fit_available(ds41_expert_store* store) {
   if (!store)
     return false;
-  /* A pruned build takes the ranking's kept experts in the same order,
-   * renumbered; an unknown pruned build seeds without a ranking. */
-  std::vector<gufo::expert_stream::Ranked> ranked;
-  if (store->n_expert == DS41_MAX_EXPERT || store->pruned) {
-    constexpr uint16_t kDropped = 0xffff;
-    std::array<std::array<uint16_t, DS41_MAX_EXPERT>, DS41_N_LAYER> own;
-    for (uint32_t l = 0; l < DS41_N_LAYER; ++l) {
-      own[l].fill(kDropped);
-      for (uint32_t j = 0; j < store->n_expert; ++j)
-        own[l][store->pruned ? store->pruned->kept[l * store->n_expert + j]
-                             : j] = static_cast<uint16_t>(j);
-    }
-    ranked.reserve(kDefaultExpertRank.size());
-    for (size_t i = 0; i < kDefaultExpertRank.size(); ++i) {
-      const uint32_t layer = kDefaultExpertRank[i] / DS41_MAX_EXPERT;
-      const uint16_t expert =
-          own[layer][kDefaultExpertRank[i] % DS41_MAX_EXPERT];
-      if (expert != kDropped)
-        ranked.push_back(
-            {layer, expert,
-             static_cast<uint64_t>(kDefaultExpertRank.size() - i)});
-    }
-  }
-  const char* source =
-      !store->pruned
-          ? (ranked.empty() ? "no ranking for this expert-pruned build"
-                            : "built-in V4.1 ranking")
-          : "built-in V4.1 ranking of the kept experts";
-  return store->store->Seed(std::move(ranked), source);
-}
-
-bool ds41_expert_store_seed(ds41_expert_store* store, const char* path) {
-  if (!store || !path)
-    return false;
-  std::ifstream in(path);
-  std::string magic;
-  if (!std::getline(in, magic) || magic != "DS41_EXPERT_HISTOGRAM_V1")
-    return false;
-  std::array<std::array<bool, DS41_MAX_EXPERT>, DS41_N_LAYER> seen{};
-  std::vector<gufo::expert_stream::Ranked> ranked;
-  std::string line;
-  while (std::getline(in, line)) {
-    uint32_t layer = 0, expert = 0;
-    uint64_t count = 0;
-    std::string extra;
-    std::istringstream row(line);
-    if (!(row >> layer >> expert >> count) || (row >> extra))
-      return false;
-    if (layer >= DS41_N_LAYER || expert >= store->n_expert || !count ||
-        seen[layer][expert])
-      return false;
-    seen[layer][expert] = true;
-    ranked.push_back({layer, expert, count});
-  }
-  if (!in.eof())
-    return false;
-  std::sort(ranked.begin(), ranked.end(),
-            [](const gufo::expert_stream::Ranked& a,
-               const gufo::expert_stream::Ranked& b) {
-              if (a.count != b.count)
-                return a.count > b.count;
-              return a.layer != b.layer ? a.layer < b.layer
-                                        : a.expert < b.expert;
-            });
-  return store->store->Seed(std::move(ranked), path);
+  const uint64_t available = gufo::ext::HostAvailableBytes();
+  const uint64_t cached = store->store->GetStats().cache_bytes;
+  return store->store->Fit(
+      cached + (available > store->headroom ? available - store->headroom : 0));
 }
 
 bool ds41_expert_store_prepare(

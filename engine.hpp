@@ -115,6 +115,11 @@ public:
   /// The streamed expert store serving sizes once the sessions exist; null
   /// for a resident model.
   [[nodiscard]] gufo::expert_stream::Store* ExpertStore() const noexcept;
+  /// Without serving (`gufo prompt`, `gufo bench`): sizes and fills the
+  /// streamed expert cache from the memory available now, leaving headroom
+  /// for the sessions; call right after Load. Serving sizes it through
+  /// ResourceClaim instead. True for resident weights.
+  bool FitExpertCache();
   /// Routes image positions with the MoE gates' image bias, for image
   /// prompts; enable it before creating sessions.
   [[nodiscard]] bool EnableImageRouting(std::string* error_msg = nullptr);

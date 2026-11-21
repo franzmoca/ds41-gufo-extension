@@ -195,6 +195,10 @@ void ds41_engine_close(ds41_engine* engine);
 /* Streamed engines: the expert store, which serving sizes once the sessions
  * exist; null for a resident engine. */
 gufo::expert_stream::Store* ds41_engine_expert_store(ds41_engine* engine);
+/* Without serving (gufo prompt, gufo bench, probes): sizes and fills the
+ * streamed expert cache from the memory available now, leaving headroom for
+ * the sessions. True for a resident engine. */
+bool ds41_engine_fit_expert_cache(ds41_engine* engine);
 int ds41_engine_vocab_size(const ds41_engine* engine);
 const char* ds41_engine_model_name(const ds41_engine* engine);
 
