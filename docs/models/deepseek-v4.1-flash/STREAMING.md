@@ -87,9 +87,9 @@ only the resident tensors, so the dense weights go through the device heap.
 - **Host pressure.** The fitted cache leaves about 2 GiB free on purpose, so
   while experts stream Gufo measures host pressure against the store's
   1 GiB floor rather than its 4 GiB host reserve. Below the floor, the idle
-  server first frees the cache's newest chunks, dropping their experts
-  without reading them, then prompt-cache memory, and refuses new requests
-  below half the floor. Once the floor, the
+  server first frees the cache's newest chunks, moving the experts in use
+  out of them into the slots of the coldest, then prompt-cache memory, and
+  refuses new requests below half the floor. Once the floor, the
   released bytes and 256 MiB are available again, the cache may regrow to
   its grant (E127).
 

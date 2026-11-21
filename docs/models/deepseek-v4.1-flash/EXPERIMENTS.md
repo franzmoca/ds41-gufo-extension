@@ -4978,6 +4978,27 @@ restored it, the repeated request gave the same reply, and none of the
 server's 135 MiB in swap was cache. Device pages cost about 330 MiB of kernel
 memory for the 51,000 pages of the cache, against about 200 MiB of page
 tables for managed memory. These runs are in `arms-residence.json`.
+
+With the cache in device pages, the reason to drop the freed chunks'
+experts was gone, so Gufo `b500709c` moves them again, keeping each size
+class's most recently used experts through a release. Dropping kept the
+freed chunks' contents, which after the single fill are the lowest ranked
+but after serving's eviction churn include experts in use. Under the 4 GiB
+hog, M moving them and D dropping them (Gufo `aafe2464`), fresh server each,
+in the order M D D M:
+
+| Arm | Available with the hog (GiB) | Released (GB) | Release | Server swap after (MiB) |
+| --- | ---: | ---: | ---: | ---: |
+| M1 | 0.34 | 2.96 | 2.14 s | 130 |
+| D1 | 0.33 | 2.97 | 1.25 s | 137 |
+| D2 | 0.30 | 3.17 | 1.52 s | 134 |
+| M2 | 0.90 | 2.96 | 0.71 s | 97 |
+
+The release times overlap (M2 had the mildest shortfall), so the moves'
+cost is inconclusive and small; every run restored the cache and repeated
+the same reply. What the moves keep was not measured on the replay: this
+test releases right after one short request, while the cache still holds
+the single fill.
 With two sessions and `--context 32768`, Gufo's `conversation`,
 `long-context` and `cache` suites (disk restart included) passed on B
 (16 cases). The arms' JSON is in
