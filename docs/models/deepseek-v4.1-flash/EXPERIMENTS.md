@@ -162,7 +162,6 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E126](#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained) | expert cache | retained | Gufo's serving sizes the expert cache from a runner claim (headroom, prompt-cache share per session) instead of the runner's backing hook (extension API 0.3.27). Same trace, replies and drafts; decode 155.0/155.3 s against 155.3/155.9 s (A B B A). With streamed experts the prompt cache holds what its backing commits at startup: reserving more host memory for it left the memory idle. |
 | [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). Release under pressure drops experts instead of moving them, and the cache lives in device pages, filled once at `Fit`: 101.2 GiB at each of three starts, a 4 GiB-hog release in 1.33 s instead of 67 s, the same replies, decode within noise. |
 | [E128](#e128--the-automatic-prompt-cache-follows-the-context-retained) | prompt cache, expert cache | retained | With streamed experts the automatic RAM prompt cache is one full-context checkpoint per session (0.29 GiB at 256K), or one in all with `--cache-disk` and at least 1 GiB, instead of 3 GiB or 1 GiB per session. On a scripted agent session (one session, subagents, regenerate, edit, a second conversation) 0.31, 1 and 2 GiB gave the same times (604/606/605 s): disk restores cost what RAM ones do. The floor is for Gufo's disk-checkpoint metadata (gufo-org/gufo#1329): at 312 MB it filled after 10 rounds of an 8-conversation rotation and prefill rose from 44k to 298k tokens per round; at 1 GiB it held all 16. |
-| [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). |
 | [E129](#e129--keep-the-expert-cache-above-gufos-host-reserve-retained) | expert cache, prompt cache | retained | Gufo past #1275 gives the RAM prompt cache's memory back whenever less than 4 GiB is available; a streamed expert cache that leaves 1-2 GiB lost the whole prompt cache at the first idle moment, and every later turn prefilled its whole prompt (agent session 1,924 s instead of 615 s). The cache now stops at 4.5 GiB free (5.5 GiB at startup), which lets `main` pin Gufo `e7e38411` with #1326 and #1327 (#13). Coding-agent replay A B B A: 97.0/97.3 GiB instead of 100.9/100.8, route hits 98.08/98.10% instead of 98.42/98.41%, decode 153.4/152.5 s against 152.6/156.1 s, prefill 36.5/36.0 s against 35.2/35.2 s. |
 
 ## Milestones
@@ -4712,57 +4711,6 @@ both builds. The arms' JSON is in
 With two sessions and `--context 32768`, Gufo's `conversation`,
 `long-context` and `cache` suites (disk restart included) passed at Gufo
 `a27bbf98`.
-## E129 — keep the expert cache above Gufo's host reserve (retained)
-
-Gufo's idle relief (gufo-org/gufo#1275, after this extension's pin
-`a27bbf98`) gives the RAM prompt cache's memory back while the server is
-idle and less than its 4 GiB host reserve is available. The streamed expert
-cache fills memory down to 2 GiB free at startup and grows on misses down to
-1 GiB, so on Gufo `e7e38411` (current `main`, with gufo-org/gufo#1326 and
-#1327 for franzmoca/ds41-gufo-extension#13) the relief released the whole
-948 MB backing right after startup:
-
-```
-event=host_pressure_release shortfall_bytes=2189090816 released_bytes=947716096
-  host_available_bytes=2105876480 host_reserve_bytes=4294967296
-```
-
-The backing was never committed again. Every capture was refused
-(`byte_capacity`), disk checkpoints included, since they stage through the
-backing, and no turn resumed even from its own session: on a scripted
-62-request agent session (one session, subagents, a regenerate and an edit,
-a second conversation) every request prefilled its whole prompt, 1,924 s in
-all instead of 615 s, 54 s to the first token at 65K tokens.
-
-The cache now stops growing at 4.5 GiB free (`kLiveFloor`), half a GiB above
-the reserve, and leaves 5.5 GiB when the server sizes it (`kWarmHeadroom`,
-the floor plus the first prompt's buffers). The relief only acts while the
-server is idle, so transient prefill peaks below the reserve do not trigger
-it. The expert store proposed to Gufo (gufo-org/gufo#1318) measures pressure
-against its own floor and gives expert memory back first; once it merges this
-headroom can return to the expert cache.
-
-Built with `nix build`: A is 0.3.1 (`3b235bf`, Gufo `a27bbf98`), B this
-change on Gufo `e7e38411`. Streamed `UD-IQ2_XXS` with the `MXFP8` Engram,
-DSpark and vision, one session, `--cache-disk`, E127's 53-request Pi
-coding-agent replay, a fresh server per run, A B B A:
-
-| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) | Lowest free (GB) |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| 0.3.1 A1 | 100.9 | 98.42% | 23.9 | 152.6 | 35.2 | 1.37 |
-| this B1 | 97.0 | 98.08% | 28.5 | 153.4 | 36.5 | 5.06 |
-| this B2 | 97.3 | 98.10% | 28.2 | 152.5 | 36.0 | 5.20 |
-| 0.3.1 A2 | 100.8 | 98.41% | 24.1 | 156.1 | 35.2 | 1.59 |
-
-The cache holds 3.6-3.9 GiB less and reads 18% more per token, but prefetch
-hides it: decode is within the arms' noise, prefill 2-4% slower. Neither B
-run released the prompt cache. B differs from A in replies 44 and 45, as in
-E127: on request 44 Gufo `e7e38411` resumed from 9,918 cached prompt tokens
-where `a27bbf98` resumed from 9,921, so it prefilled three tokens and wrote a
-different tool call; both B runs agree, with E127's drafts (3,519 drafted,
-2,939 accepted). On the agent session B matched the draft branch's prompt
-cache request for request (60 RAM, 1 disk, 1 cold; 107,952 tokens
-prefilled), in 615 s against 606 s.
 
 ## E125 — the expert store moves into Gufo (retained)
 
@@ -5085,6 +5033,62 @@ sessions in a row. The budget should drop back once Gufo stops charging
 per-checkpoint token lists (#1329). The per-request records and the
 workload scripts are in
 [artifacts/2026-11-23-prompt-cache-floor/](artifacts/2026-11-23-prompt-cache-floor/).
+
+## E129 — keep the expert cache above Gufo's host reserve (retained)
+
+Gufo's idle relief (gufo-org/gufo#1275, after this extension's pin
+`a27bbf98`) gives the RAM prompt cache's memory back while the server is
+idle and less than its 4 GiB host reserve is available. The streamed expert
+cache fills memory down to 2 GiB free at startup and grows on misses down to
+1 GiB, so on Gufo `e7e38411` (current `main`, with gufo-org/gufo#1326 and
+#1327 for franzmoca/ds41-gufo-extension#13) the relief released the whole
+948 MB backing right after startup:
+
+```
+event=host_pressure_release shortfall_bytes=2189090816 released_bytes=947716096
+  host_available_bytes=2105876480 host_reserve_bytes=4294967296
+```
+
+The backing was never committed again. Every capture was refused
+(`byte_capacity`), disk checkpoints included, since they stage through the
+backing, and no turn resumed even from its own session: on a scripted
+62-request agent session (one session, subagents, a regenerate and an edit,
+a second conversation) every request prefilled its whole prompt, 1,924 s in
+all instead of 615 s, 54 s to the first token at 65K tokens.
+
+The cache now stops growing at 4.5 GiB free (`kLiveFloor`), half a GiB above
+the reserve, and leaves 5.5 GiB when the server sizes it (`kWarmHeadroom`,
+the floor plus the first prompt's buffers). The relief only acts while the
+server is idle, so transient prefill peaks below the reserve do not trigger
+it. The expert store proposed to Gufo (gufo-org/gufo#1318) measures pressure
+against its own floor and gives expert memory back first; once it merges this
+headroom can return to the expert cache.
+
+Built with `nix build`: A is 0.3.1 (`3b235bf`, Gufo `a27bbf98`), B this
+change on Gufo `e7e38411`. Streamed `UD-IQ2_XXS` with the `MXFP8` Engram,
+DSpark and vision, one session, `--cache-disk`, E127's 53-request Pi
+coding-agent replay, a fresh server per run, A B B A:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) | Lowest free (GB) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0.3.1 A1 | 100.9 | 98.42% | 23.9 | 152.6 | 35.2 | 1.37 |
+| this B1 | 97.0 | 98.08% | 28.5 | 153.4 | 36.5 | 5.06 |
+| this B2 | 97.3 | 98.10% | 28.2 | 152.5 | 36.0 | 5.20 |
+| 0.3.1 A2 | 100.8 | 98.41% | 24.1 | 156.1 | 35.2 | 1.59 |
+
+The cache holds 3.6-3.9 GiB less and reads 18% more per token, but prefetch
+hides it: decode is within the arms' noise, prefill 2-4% slower. Neither B
+run released the prompt cache. B differs from A in replies 44 and 45, as in
+E127: on request 44 Gufo `e7e38411` resumed from 9,918 cached prompt tokens
+where `a27bbf98` resumed from 9,921, so it prefilled three tokens and wrote a
+different tool call; both B runs agree, with E127's drafts (3,519 drafted,
+2,939 accepted). On the agent session B matched the draft branch's prompt
+cache request for request (60 RAM, 1 disk, 1 cold; 107,952 tokens
+prefilled), in 615 s against 606 s.
+
+On the expert store (E127) serving measures host pressure against the
+store's 1 GiB floor and gives expert memory back first, so the extension
+keeps its 2 GiB headroom there and the cache keeps these 3.6-3.9 GiB.
 
 ## Backlog measurements without an E-number
 
