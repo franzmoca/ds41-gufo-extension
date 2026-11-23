@@ -122,6 +122,11 @@ bool ds41_layer_is_kv_source(uint32_t il) {
   return false;
 }
 
+uint32_t ds41_layer_layout_state_ratio(uint32_t il) {
+  return ds41_layer_is_kv_source(il) ? ds41_expected_layer_compress_ratio(il)
+                                     : 0;
+}
+
 bool ds41_layer_is_index_source(uint32_t il) {
   for (uint32_t layer : DS41_INDEX_SOURCE_LAYERS) {
     if (layer == il)

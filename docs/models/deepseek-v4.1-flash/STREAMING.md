@@ -71,11 +71,19 @@ only the resident tensors, so the dense weights go through the device heap.
   until the cache is sized; filling it does not count in the statistics.
 - **Fit after the sessions.** The runner declares an expert-cache claim
   (Gufo's `TextRunnerExpertCacheClaim`): its store, 2 GiB of headroom, and
-  the RAM prompt cache's automatic share, 1 GiB per session with
-  `--cache-disk` (3 GiB without it). Once `gufo serve` has created its
-  sessions and the prompt cache's backing, it grants the store the cache
-  plus the free memory, minus the headroom and the prompt-cache budget still
-  to commit. The store allocates the prefetch stage out of the grant, takes
+  the RAM prompt cache's automatic share per session. Its total is the
+  backing one checkpoint of a whole context takes, from the continuation
+  layout (`ContinuationAdapter::FullContextBackingBytes`), once per session,
+  or once in all with `--cache-disk`, whose checkpoints restore the
+  conversations the RAM cache evicts (16-30 ms for about 38K tokens). With
+  DSpark one checkpoint is 0.29 GiB at a 256K context and 1.11 GiB at 1M.
+  With `--cache-disk` the total is at least 1 GiB: Gufo charges the disk
+  checkpoints' token lists to the RAM cache's metadata, about a tenth of its
+  budget, and a smaller budget fills with them after one or two long agent
+  sessions, after which checkpoints are refused (E128, gufo-org/gufo#1329).
+  Once `gufo serve` has created its sessions, it commits the prompt cache's
+  whole backing and grants the store the cache plus the free memory, minus
+  the headroom. The store allocates the prefetch stage out of the grant, takes
   the rest as its limit and fills it once from the ranking (about 25 s for
   101 GiB), so the first prompt does not grow the cache. `gufo prompt`,
   `gufo bench` and the load probe size it themselves right after loading

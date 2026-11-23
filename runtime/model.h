@@ -391,6 +391,10 @@ void* ds41_decoder_state_part(ds41_decoder* decoder, uint32_t layer, int part,
                               uint64_t* bytes);
 /* Tokens per row of a KV source layer's row parts; 0 for other layers. */
 uint32_t ds41_layer_state_ratio(uint32_t layer);
+/* The same ratio as the compiled layout declares it. Loading refuses an
+ * artifact whose ratios differ, so it equals ds41_layer_state_ratio once a
+ * model is loaded, and needs none. */
+uint32_t ds41_layer_layout_state_ratio(uint32_t layer);
 /* Adopts state restored into the decoder's arrays at `n` tokens, rebuilding
  * the Engram n-gram history from the tokens. */
 int ds41_decoder_adopt(ds41_decoder* decoder, const int* tokens, uint32_t n);

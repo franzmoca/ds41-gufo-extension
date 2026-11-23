@@ -11,8 +11,13 @@ Needs extension API 0.3.39 (Gufo's experimental expert store, gufo-org/gufo#1318
 
 * **expert streaming:** Gufo's serving sizes the streamed expert cache
   together with the RAM prompt cache, and the automatic prompt-cache share
-  (1 GiB with `--cache-disk`, 3 GiB without) is now per session
+  is now per session
   ([E126](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained)).
+* **expert streaming:** the automatic RAM prompt cache follows the context:
+  room for one checkpoint of a whole context per session (0.29 GiB at 256K),
+  or one in all with `--cache-disk` and at least 1 GiB, instead of a fixed
+  3 GiB or 1 GiB per session, so the expert cache gets the rest
+  ([E128](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e128--the-automatic-prompt-cache-follows-the-context-retained)).
 * **expert streaming:** under host pressure the streamed expert cache gives
   memory back first, keeping the experts in use, and regrows once it is free
   again; pressure is measured against the store's 1 GiB floor instead of

@@ -161,6 +161,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E125](#e125--the-expert-store-moves-into-gufo-retained) | expert cache | retained | The model-neutral expert store moves into Gufo as an experimental API (extension API 0.3.26), built without this extension's fast-math; the extension keeps its DeepSeek layout and policy. Same expert trace as before, same replies and drafts; decode 155.6/156.2 s in both arms (A B B A). |
 | [E126](#e126--serving-sizes-the-expert-cache-with-the-prompt-cache-retained) | expert cache | retained | Gufo's serving sizes the expert cache from a runner claim (headroom, prompt-cache share per session) instead of the runner's backing hook (extension API 0.3.27). Same trace, replies and drafts; decode 155.0/155.3 s against 155.3/155.9 s (A B B A). With streamed experts the prompt cache holds what its backing commits at startup: reserving more host memory for it left the memory idle. |
 | [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). Release under pressure drops experts instead of moving them, and the cache lives in device pages, filled once at `Fit`: 101.2 GiB at each of three starts, a 4 GiB-hog release in 1.33 s instead of 67 s, the same replies, decode within noise. |
+| [E128](#e128--the-automatic-prompt-cache-follows-the-context-retained) | prompt cache, expert cache | retained | With streamed experts the automatic RAM prompt cache is one full-context checkpoint per session (0.29 GiB at 256K), or one in all with `--cache-disk` and at least 1 GiB, instead of 3 GiB or 1 GiB per session. On a scripted agent session (one session, subagents, regenerate, edit, a second conversation) 0.31, 1 and 2 GiB gave the same times (604/606/605 s): disk restores cost what RAM ones do. The floor is for Gufo's disk-checkpoint metadata (gufo-org/gufo#1329): at 312 MB it filled after 10 rounds of an 8-conversation rotation and prefill rose from 44k to 298k tokens per round; at 1 GiB it held all 16. |
 | [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). |
 | [E129](#e129--keep-the-expert-cache-above-gufos-host-reserve-retained) | expert cache, prompt cache | retained | Gufo past #1275 gives the RAM prompt cache's memory back whenever less than 4 GiB is available; a streamed expert cache that leaves 1-2 GiB lost the whole prompt cache at the first idle moment, and every later turn prefilled its whole prompt (agent session 1,924 s instead of 615 s). The cache now stops at 4.5 GiB free (5.5 GiB at startup), which lets `main` pin Gufo `e7e38411` with #1326 and #1327 (#13). Coding-agent replay A B B A: 97.0/97.3 GiB instead of 100.9/100.8, route hits 98.08/98.10% instead of 98.42/98.41%, decode 153.4/152.5 s against 152.6/156.1 s, prefill 36.5/36.0 s against 35.2/35.2 s. |
 
@@ -5003,6 +5004,87 @@ With two sessions and `--context 32768`, Gufo's `conversation`,
 `long-context` and `cache` suites (disk restart included) passed on B
 (16 cases). The arms' JSON is in
 [artifacts/2026-11-21-expert-store-pr/](artifacts/2026-11-21-expert-store-pr/).
+
+## E128 — the automatic prompt cache follows the context (retained)
+
+With streamed experts the RAM prompt cache and the expert cache split the
+host's memory, so the extension sets the prompt cache's automatic budget
+(E126). It was 3 GiB per session, or 1 GiB with `--cache-disk`. It is now
+the backing one checkpoint of a whole context takes, computed from the
+continuation layout (`ContinuationAdapter::FullContextBackingBytes`, checked
+against a measured 128 MB checkpoint at 130,153 tokens by
+`deepseek41flash.checkpoint_size`):
+
+- without a disk cache, one checkpoint per session (0.29 GiB at a 256K
+  context with DSpark, 1.11 GiB at 1M);
+- with `--cache-disk`, one in all whatever the sessions, and at least 1 GiB.
+
+**The floor.** Gufo charges every disk checkpoint's manifest, including its
+token list from the start of the conversation, to the RAM cache's metadata,
+which gets about a tenth of the budget (gufo-org/gufo#1329). At one 256K
+checkpoint, 312 MB, that is about 31 MB. Once it is full, captures and disk
+writes are refused (since gufo-org/gufo#1326; before it every turn failed
+with `std::bad_alloc`, franzmoca/ds41-gufo-extension#13).
+
+**Stranded budget.** A budget above the 2 GiB Gufo commits at startup was
+left unused by both caches: the expert cache's grant excluded the rest,
+and committing it later failed the device heap's dispatch reserve. Gufo's
+serving now commits the whole budget before the grant (gufo-org/gufo#1318).
+At startup, 1M context with 4 sessions and no disk cache: 2.62 GB pending
+and 4.0 GB free before, nothing pending and 1.8 GB free after; 256K with an
+explicit 4 GiB: 2.15 GB pending and 3.6 GB free before, none and 1.5 GB
+after. Within 256K, and with `--cache-disk` at 1M, nothing was pending.
+
+All runs: streamed `UD-IQ2_XXS` with DSpark and vision, `--context 262144`,
+`--cache-disk` on a fresh directory, a fresh server per run, Gufo
+`feat/expert-stream` with this change.
+
+**Rotation.** 8 conversations over 4 sessions, about 5,000 new tokens per
+turn, 16 rounds of 8 requests, 200-token replies. The 312 MB arm ran on the
+branch before its rebase onto #1326 and #1327 (which it carried as patches).
+
+| Arm | OK | Prefilled | Last round | Requests (s) | Metadata peak | RAM reuses |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 312 MB | 128/128 | 1.55 M | 298k | 7,962 | 39 MB from round 10 | 0 |
+| 1 GiB | 128/128 | 0.71 M | 44k | 5,179 | 104 MB at round 15 | 13 |
+
+At 312 MB every conversation's checkpoints were evicted before its next
+turn: a 5K-token checkpoint costs about 14 MB, 11.8 MB of it private state,
+and the cache retains three per turn (grids at 2,048 and 4,096 tokens and
+the frontier), so a round needs about 340 MB. Every turn restored from
+disk; from round 11 metadata was full and prefill grew each round. At 1 GiB
+prefill stayed at the new tokens, but metadata reached its share by round
+15, so this rotation outgrows the floor too.
+
+**Agent session.** One session, one request at a time: a main agent that
+grows by 1-3K-token tool results to 67K tokens, a 4-turn subagent after main
+turns 8, 16 and 24, a regenerate and an edit of the last message after
+turns 12 and 20, then a second conversation of 10 turns before the first
+resumes for 5 (62 requests, a shared 5K-token system prompt).
+
+| Arm | Seconds | TTFT sum | Prefilled | RAM / disk / none | Metadata peak | Expert cache |
+| --- | ---: | ---: | ---: | --- | ---: | ---: |
+| 0.31 GB (automatic) | 604 | 146.9 s | 110k | 54 / 6 / 2 | 22.5 MB | 102.3 GiB |
+| 1 GiB | 606 | 147.0 s | 108k | 60 / 1 / 1 | 36.6 MB | 101.9 GiB |
+| 2 GiB | 605 | 146.2 s | 106k | 61 / 0 / 1 | 59.5 MB | 100.9 GiB |
+
+Resuming the main agent after a subagent took 1.57-1.76 s to the first
+token from disk and 1.61-1.82 s from RAM: the files were just written and
+sit in the page cache. Regenerates restored the whole prompt from RAM in
+every arm (0.02-0.03 s). The one difference: the second conversation found
+the shared system prompt's 2,048-token grid in RAM at 1 and 2 GiB (3.7 s to
+the first token) and nothing at 0.31 GB (5.4 s); disk keeps no checkpoint
+that ends inside the shared prefix. The session added about 18 MB of disk
+metadata and 1.5-1.7 GB of disk, so 0.31 GB fills after one or two such
+sessions and 1 GiB holds about five, about what the default 8 GiB disk cache
+keeps. Larger budgets bought nothing here and cost expert cache.
+
+Each arm ran once. Not covered: restores after the page cache dropped the
+files, long replies (where the expert cache's size counts), and five
+sessions in a row. The budget should drop back once Gufo stops charging
+per-checkpoint token lists (#1329). The per-request records and the
+workload scripts are in
+[artifacts/2026-11-23-prompt-cache-floor/](artifacts/2026-11-23-prompt-cache-floor/).
 
 ## Backlog measurements without an E-number
 

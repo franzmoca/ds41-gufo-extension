@@ -228,8 +228,12 @@ memory use is about 13 GiB plus the cap.
 With `--stream-experts`, routed experts are read from the SSD into a cache that
 fills the free memory, so more free memory means fewer disk reads. Streaming is
 never chosen automatically: a build that does not fit fails to load and says what
-it needs. The automatic RAM prompt cache is 1 GiB with `--cache-disk` and 3 GiB
-without, and the expert cache gets the rest.
+it needs. The automatic RAM prompt cache has room for one checkpoint of a whole
+context per session (about 0.29 GiB at a 256K context and 1.1 GiB at 1M), and
+the expert cache gets the rest. With `--cache-disk` it has room for one in all,
+whatever the sessions, and at least 1 GiB: conversations it evicts restore
+from disk in milliseconds, and the RAM cache keeps the disk checkpoints'
+bookkeeping.
 
 **A second NVMe drive helps.** Pack each expert's tail into a file on the second
 drive and link it beside the first shard as `MODEL.gguf.expert-tails`. Every expert

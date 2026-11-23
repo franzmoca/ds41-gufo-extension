@@ -42,10 +42,14 @@ using namespace gufo::ext;
 constexpr std::string_view kStateAbi = "deepseek-v4.1-flash-gfx1151-state-v1";
 
 // The memory left to a streamed model's expert cache depends on the RAM cache,
-// so its automatic budget is a fixed share per session, smaller with a disk
-// cache.
-constexpr std::size_t kStreamedRamShareBytes = std::size_t{3} << 30;
-constexpr std::size_t kStreamedDiskRamShareBytes = std::size_t{1} << 30;
+// so its automatic budget is room for checkpoints of a whole context: one per
+// session, or one in all with a disk cache, from which conversations evicted
+// from RAM restore in milliseconds.
+// With a disk cache the budget is at least this much: Gufo charges the disk
+// checkpoints' token lists to the RAM cache's metadata, about a tenth of the
+// budget, and they grow with the conversations on disk (gufo-org/gufo#1329).
+// 1 GiB holds those of about five 67K-token agent sessions (E128).
+constexpr std::size_t kDiskRamFloorBytes = std::size_t{1} << 30;
 // Free memory the expert cache leaves once serving sizes it after the
 // sessions: buffers the first prompt still allocates (~0.8 GiB measured at 1,
 // 2 and 4 sessions), transient prefill peaks (~0.3-0.6 GiB) and margin
@@ -1124,9 +1128,26 @@ std::shared_ptr<ext::TextModelRunner> CreateDeepSeekTextRunner(
       }
       PrepareVision(*vision);
     }
-    const std::size_t ram_share = !model->StreamsExperts() ? 0
-                                  : disk_cache ? kStreamedDiskRamShareBytes
-                                               : kStreamedRamShareBytes;
+    std::size_t ram_share = 0;
+    if (model->StreamsExperts()) {
+      const auto checkpoint = ContinuationAdapter::FullContextBackingBytes(
+          max_context, use_dspark,
+          static_cast<std::size_t>(model->VocabSize()));
+      // Serving multiplies the share by the sessions.
+      const auto sessions = options.session_count;
+      const auto disk_total = std::max(checkpoint, kDiskRamFloorBytes);
+      ram_share =
+          disk_cache ? (disk_total + sessions - 1) / sessions : checkpoint;
+      server::Logger::Info(
+          "cache", "deepseek41 prompt-cache share per session: " +
+                       std::to_string(ram_share) + " bytes (" +
+                       std::to_string(checkpoint) + " for a " +
+                       std::to_string(max_context) + "-token checkpoint, " +
+                       (disk_cache ? "one in all with the disk cache, "
+                                     "at least 1 GiB"
+                                   : "one per session") +
+                       ")");
+    }
     return std::make_shared<DeepSeekTextRunner>(
         std::move(model), max_context, use_dspark,
         options.speculative.max_draft_tokens, std::move(model_fingerprint),
