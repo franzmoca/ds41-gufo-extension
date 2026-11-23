@@ -5,7 +5,7 @@ Notable user-facing changes are recorded here. Versions follow `version` in
 
 ## Unreleased
 
-Needs extension API 0.3.39 (Gufo's experimental expert store, gufo-org/gufo#1318).
+Needs extension API 0.3.43 (Gufo's experimental expert store, gufo-org/gufo#1318).
 
 ### Features
 
