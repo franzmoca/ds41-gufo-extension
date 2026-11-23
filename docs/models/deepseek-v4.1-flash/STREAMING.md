@@ -152,14 +152,17 @@ its pinned mirror is rewritten.
   keep value's. Lent slots stay unoccupied, return to the spare slots at
   the next call, and are the first an admitted expert takes, so the
   admission policy does not change (E119).
-- **Prefetch stage.** A compact 96-row buffer in two 48-row parity halves,
-  allocated out of the grant before the cache is filled. A job's
-  experts take rows in its layer's half, addressed with the allocation
-  stride (the stride of the largest expert). A job beyond 48 experts keeps
-  the experts the most predicted routes use (E104); the excess stays a
-  demand read. A job starts only while its
-  layer is the next one to prepare, checked under the read pool's lock: an
-  overtaken job's half may hold the rows of the layer in compute.
+- **Prefetch stage.** A compact 96-row buffer in two 48-row halves,
+  allocated out of the grant before the cache is filled. Each prepare opens
+  the next prediction window, and windows alternate halves, so the layer
+  in compute and the one being prefetched never share one, also where the
+  last layer wraps to the first (E130). A job's experts take rows in its
+  window's half, addressed with the allocation stride (the stride of the
+  largest expert). A job beyond 48 experts keeps the experts the most
+  predicted routes use (E104); the excess stays a demand read. A job starts
+  only while its window is the next one to prepare, checked under the read
+  pool's lock: an overtaken job's half may hold the rows of the layer in
+  compute.
 
 ## Split reads across two drives
 

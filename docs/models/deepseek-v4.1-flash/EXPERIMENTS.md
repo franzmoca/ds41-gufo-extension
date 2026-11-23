@@ -163,6 +163,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E127](#e127--the-expert-store-as-proposed-to-gufo-retained) | expert cache | retained | The store as proposed to Gufo (extension API 0.3.38): a versioned trace replayed by Gufo's `tools/expert_stream/`, reads through Gufo's platform file layer, and host pressure measured against the store's 1 GiB floor, releasing experts first. Same trace, replies and drafts as `main` with an 80 GiB cache. On Gufo `9cde650f`, `main` loses its prompt cache to the 4 GiB host reserve at startup (prefill 200-205 s, 22 of 53 replies differ); the store arm keeps it (35.3/35.5 s). Release under pressure drops experts instead of moving them, and the cache lives in device pages, filled once at `Fit`: 101.2 GiB at each of three starts, a 4 GiB-hog release in 1.33 s instead of 67 s, the same replies, decode within noise. |
 | [E128](#e128--the-automatic-prompt-cache-follows-the-context-retained) | prompt cache, expert cache | retained | With streamed experts the automatic RAM prompt cache is one full-context checkpoint per session (0.29 GiB at 256K), or one in all with `--cache-disk` and at least 1 GiB, instead of 3 GiB or 1 GiB per session. On a scripted agent session (one session, subagents, regenerate, edit, a second conversation) 0.31, 1 and 2 GiB gave the same times (604/606/605 s): disk restores cost what RAM ones do. The floor is for Gufo's disk-checkpoint metadata (gufo-org/gufo#1329): at 312 MB it filled after 10 rounds of an 8-conversation rotation and prefill rose from 44k to 298k tokens per round; at 1 GiB it held all 16. |
 | [E129](#e129--keep-the-expert-cache-above-gufos-host-reserve-retained) | expert cache, prompt cache | retained | Gufo past #1275 gives the RAM prompt cache's memory back whenever less than 4 GiB is available; a streamed expert cache that leaves 1-2 GiB lost the whole prompt cache at the first idle moment, and every later turn prefilled its whole prompt (agent session 1,924 s instead of 615 s). The cache now stops at 4.5 GiB free (5.5 GiB at startup), which lets `main` pin Gufo `e7e38411` with #1326 and #1327 (#13). Coding-agent replay A B B A: 97.0/97.3 GiB instead of 100.9/100.8, route hits 98.08/98.10% instead of 98.42/98.41%, decode 153.4/152.5 s against 152.6/156.1 s, prefill 36.5/36.0 s against 35.2/35.2 s. |
+| [E130](#e130--the-expert-store-as-merged-into-gufo-retained) | expert cache | retained | The store as merged into Gufo (`60c48924`, extension API 0.3.43), after a review that seeds exact uses, alternates prefetch halves per window and fixes its failure and pressure paths. Same replies and drafts as before review (P R R P) and at the pin, decode within noise; route hits 95.94% against 95.93% at an 80 GiB cache; 17/17 on the coding-agent benchmark, replies identical until a tool's output differed. |
 
 ## Milestones
 
@@ -5089,6 +5090,88 @@ prefilled), in 615 s against 606 s.
 On the expert store (E127) serving measures host pressure against the
 store's 1 GiB floor and gives expert memory back first, so the extension
 keeps its 2 GiB headroom there and the cache keeps these 3.6-3.9 GiB.
+
+## E130 — the expert store as merged into Gufo (retained)
+
+Gufo merged the expert store (gufo-org/gufo#1318) as `60c48924`, extension
+API 0.3.43, after a review that changed the store in ways this extension
+sees:
+
+- **Seeding.** A seeded expert starts with exactly its ranking's uses
+  (`seed_uses × min(8, log2(1 + count))`): the fill no longer pads a layer
+  with copies of its last expert, and the seed prepares no longer add a use
+  or advance the layer clocks.
+- **Prefetch halves** alternate with each prediction window instead of
+  following layer parity, so the last layer and layer 0 never share one
+  (40 layers here, so they never did).
+- **Failures and pressure.** A failed `Prepare` caches nothing it read;
+  `Release` drops a running prefetch instead of returning 0 (which left the
+  prompt cache to give the memory back), frees the rows borrowed for misses,
+  and an empty release no longer holds the cache at zero.
+- **Trace.** `Fit`, `Release` and `Restore` write a new snapshot; Gufo's
+  `read_trace` replays from the last one and drops the prepares before it.
+
+Built with `nix build`: P is this branch on Gufo `9e4e9129` (the pull
+request before review), R on `4c8fa6a2` (the reviewed head, whose store
+`60c48924` merged unchanged). Streamed `UD-IQ2_XXS` with the `MXFP8` Engram,
+DSpark and vision, one session, E127's 53-request Pi coding-agent replay, a
+fresh server per run, P R R P:
+
+| Arm | Expert cache (GiB) | Route hits | MiB read/token | Decode (s) | Prefill (s) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| P1 | 100.98 | 98.43% | 25.5 | 168.7 | 38.4 |
+| R1 | 101.15 | 98.43% | 25.2 | 165.6 | 36.2 |
+| R2 | 101.08 | 98.42% | 25.2 | 165.4 | 36.0 |
+| P2 | 101.15 | 98.44% | 25.0 | 164.2 | 35.4 |
+
+All four gave the same replies and drafts (3,787 drafted, 3,110 accepted).
+Decode is within P's own spread. Against E127's device-page runs the replay
+differs from request 40 on, which resumed from 9,490 cached prompt tokens
+instead of 9,487: replies 44, 45 and 49 change and the session generates
+5,883 tokens instead of 5,509, so decode takes 165 s instead of 153 s at
+28.1 against 27.8 ms per token.
+
+Traced at an 80 GiB cache, both arms seeded the same 8,450 experts; only the
+seeded uses (by at most 4) and the clocks (16 in P, 0 in R) differ. Over the
+3.38M routes both traces share, route hits are 95.93% (P) and 95.94% (R),
+0.22% of routes flip either way, and demand reads differ by 0.2%: the
+seeding change does not move the tuned policy. The traces part at request
+50, where traced P resumed from 11,505 cached prompt tokens and every other
+run, untraced P included, from 11,502: prompt-cache timing, as on E127's
+request 44.
+
+With a 4 GiB memory hog at idle (0.32 GiB available), R released 2.90 GB in
+0.42 s (traced: 3.02 GB in 1.30 s, within E127's 0.7-2.1 s), the prompt
+cache gave nothing back, and after the hog exited the cache was restored and
+the repeated request gave the same reply. The traced run holds two snapshots,
+and `read_trace` replays from the second.
+
+On the 17-task coding-agent benchmark (one session, `--cache-disk`, low
+reasoning effort with a 2,048-token reasoning budget), R against P's code
+(`fd84f34`):
+
+| | P | R |
+| --- | ---: | ---: |
+| Tasks passed | 15/17 | 17/17 |
+| Decode tok/s | 28.8 | 29.8 |
+| Route hits | 97.60% | 97.51% |
+| MiB read/token | 23.85 | 24.03 |
+| Expert cache (GiB) | 100.9 | 100.4 |
+
+Every task's model replies were identical in both until a tool's output
+differed (an `ls` timestamp or a test's timing); one task matched end to
+end, so the pass counts follow the tools, not the build. Neither server
+released memory or refused backing growth; both logged 48
+`frontier_capture_refused`.
+
+At the pin, `60c48924` with `flake.lock` updated and nothing overridden,
+the replay gave R's replies and drafts (decode 167.8 s, one run, within the
+arms' spread), the extension's and the store's tests pass, and Gufo's
+`conversation`, `long-context` and `cache` suites (disk restart included)
+pass 16/16 at two sessions and a 32K context, as on R.
+
+The arms' JSON is in
+[artifacts/2026-11-23-expert-store-merged/](artifacts/2026-11-23-expert-store-merged/).
 
 ## Backlog measurements without an E-number
 
