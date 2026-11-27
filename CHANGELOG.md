@@ -3,7 +3,18 @@
 Notable user-facing changes are recorded here. Versions follow `version` in
 [extension.json](extension.json).
 
-## Unreleased
+## 0.6.0 (2026-11-27)
+
+Built on upstream Gufo `c14cef2d`; needs extension API 0.3.43 or later.
+
+### Dependencies
+
+* **Gufo:** pinned to `c14cef2d`. A tool whose parameters require one of
+  several fields (`anyOf` of `required` lists) now constrains its arguments;
+  before, the call could only be `{}`. A recursive tool schema no longer stalls
+  the request. Gufo now serves HTTP, decodes requests and parses tool calls in
+  Rust: a 53-request coding-agent replay gives the same replies, drafts and
+  timings as on `60c48924`.
 
 ### Performance
 
