@@ -172,6 +172,7 @@ Measurements first recorded in the backlog, without an E-number, are in
 | [E136](#e136--grouped-expert-gemv-uniform-sgpr-offsets-hoisted-decode-and-task-major-dispatch-retained) | decode kernels | retained | Replaced per-column 64-bit pointer arrays in the grouped expert GEMV with uniform SGPR `x_off[kCols]`, eliminating spills at 6–8 columns so 2–8-row `gate+up` runs in one launch without splitting, and added a task-major kernel (`expert_group_task_kernel`, scalar activation loads, hoisted weight decode, LDS xor-tree reduction) for 9–16-row batches and `IQ1`/`IQ2_XS`/`IQ2_S` downs. Bit-exact on all 10 formats. Coding-agent replay ABBA: decode 142.10/142.69 → 140.90/141.09 s (−1.0%, 49/53 requests faster, all buckets faster), identical replies and drafts; standalone 16-row batches −10% to −28%. |
 | [E137](#e137--lazy-logits-download-persistent-engram-pool-and-drafter-pass-cleanups-retained) | host / drafter | retained | Deferred logits D2H downloads and added 1-row device argmax across single- and multi-session decode (materializing lazily only for host fallback, snapshots, logprobs or cache capture), replaced per-step `std::async`/`std::thread` Engram spawns with a persistent FIFO worker pool, added `ds41_v41_init_hc` to replace 4× `copy_rows` + `one_hot` upload, and cleaned up the DSpark drafter (`q_a`+`kv` `gemv_pair`, side-stream `hc_mix`, coalesced pinned staging). AR greedy ABBA: 57.17/57.10 → 56.95/56.92 s (−0.35%, −0.20 ms/tok); traced drafter pass 7.93 → 7.79 ms; DSpark agent/greedy within cache/policy noise, identical replies; 2-session `conversation`/`batch`/`logprobs`/`cache` suites pass. |
 | [E138](#e138--split-decode-attention-10-splits-to-halve-attn_partial-writeback-retained) | decode kernels | retained | Reduced `kAttnSplits` from 20 to 10 (pure FP32, `4 × 10 = 40` blocks matching Strix Halo's 40 CUs), halving `attn_partial` writeback (`2.64 → 1.32 MB/row`, freeing 21.1 MiB scratch) while keeping DSpark == AR bit-identical and passing `deepseek41flash.attention` at `1e-5` unchanged. 3K decode-path quality gate: PPL 7.159 → 7.123 (`mean_dnll = −0.0050 ± 0.0045`, top-1 0.5695 → 0.5709; FP16 partials rejected after `pos=0` outlier drift). Coding-agent replay ABBA: 19/20 matched-reply requests faster (−2.2%), `routes` wait 7.04 → 6.89 ms/tok; AR greedy 57.23/56.97 → 55.78/55.49 s (−2.6%); 16-row `attn + 28.8 MB` bench −12.5 ms/cycle. |
+| [E139](#e139--dspark-q2_s64-screening-head-mall-resident-q4-markov-rerank-and-monotonic-width-policy-retained) | DSpark/speculation | retained | Replaced the DSpark drafter's full-vocab `Q6_K` output head (`2.56 ms`) and `5×` FP16 Markov `W2` (`1.51 ms`) with a draft-only `Q2_S64` screening head (`v_dot2_f32_f16`, `0.92 ms` at `n=5`, `1.40 ms` at `n=10`) + MALL-resident `Q4_M256` Markov `W2` (`18.6` vs `66.2 MB`, freeing `47.6 MiB`) + exact target-head top-128 rerank (`0.38 ms` ×5; combined head+Markov `4.07 → 1.30 ms`, `3.12×` faster; net drafter `+0.13 GiB`), cached the constant noise embedding, and replaced the additive `cycle_ms[w]` update with a separated proportional clamped `verify_ms[w]` update + `8.0 ms` monotonic per-row floor to prevent cold-miss width-5 lock. Greedy ABBA (24 short/long prompts + 2-way, 104/104 SHA-256 identical): `28.33 → 29.51 tok/s` (+4.18%, 22/24 faster; long 35K–56K `+6.54%` to `+8.01%`), 2-way `26.69 → 28.93 agg tok/s` (+8.36%). Sampled 53-request Pi coding-agent replay ABBA: `39.02 → 40.29 tok/s` (+3.26%; `49.37 → 50.17 tok/s`, +1.63% on 31/53 identical replies, 53/53 self-deterministic). |
 
 ## Milestones
 
@@ -5609,6 +5610,94 @@ identical replies and draft counts (1,448 tokens), 19/20 are faster: 26.39 →
 25.82 s (−2.2%, 54.87 → 56.08 tok/s), and `routes` GPU wait falls 7.04 →
 6.89 ms/token across the full replay. Retained.
 [Runs](artifacts/2026-11-24-attn-partial-splits/runs.json).
+
+## E139 — DSpark `Q2_S64` screening head, MALL-resident `Q4` Markov rerank and monotonic width policy (retained)
+
+Addresses [BACKLOG.md](BACKLOG.md) item 38 (the drafter's `4.07 ms` head +
+Markov cost) and long-context width-policy instability on streamed
+`UD-IQ2_XXS`.
+
+1. **Draft-only `Q2_S64` screening head (`ds41_v41_quantize_q2s64`,
+   `ds41_v41_gemv_q2s64`):** at startup, the target model's `output.weight`
+   (`Q6_K`, 543 MB; also supports `Q8_0`/`Q4_K`/`Q5_K`) is quantized on the GPU
+   into a symmetric 2-bit per-64-weight layout (`72 B / 256` weights = 186.2 MB,
+   ~5 ms at load). For `n = 1..16` drafted rows, activations pre-convert to
+   `FP16x2` (`< 256 KiB` scratch) and a task-major kernel decodes each 32-weight
+   block once into exact `{-3, -1, +1, +3}` FP16 pairs for dual-accumulator
+   `v_dot2_f32_f16` with LDS xor-tree reduction, matching `n = 1` bit for bit.
+2. **MALL-resident `Q4_M256` Markov `W2` + top-128 exact target-head rerank
+   (`ds41_v41_quantize_markov_q4`, `ds41_v41_markov_q4_rerank`):** E47 showed
+   `W2 · x` swings 24–40 logit units, so pre-Markov pruning misses winners.
+   Instead, FP16 `dspark.markov.w2.weight` (`66.2 MB`) is chunk-quantized on
+   upload into symmetric 4-bit `Q4_M256` (`128 B/row` qs + `16 B/row` FP16
+   scales = **18.6 MB**, freeing **47.6 MiB** back to the expert cache; net
+   drafter footprint `4.59 → 4.72 GiB`, `+0.13 GiB`). Because 18.6 MB stays
+   resident in gfx1151's 32 MiB MALL across the five sequential Markov slots,
+   a 128-block 4×-unrolled screening pass scores all 129,280 rows, merges the
+   top-128 candidates, re-evaluates only those 128 rows with the exact target
+   `output.weight` (`0.02 ms` across all 5 slots), and finalizes greedy argmax
+   or exact top-8 `ds41_v41_proposal` draws.
+3. **Cached noise embedding & monotonic proportional width policy
+   (`runtime/v41_dspark.cpp`, `runtime/v41_session.cpp`):** caches the constant
+   `DS41_DSPARK_NOISE_TOKEN` host embedding instead of re-dequantizing it 4×
+   per draft. Separates `verify_ms[0..5]` from `draft_ms` (initial `5.5 ms`),
+   smooths `kGainRate` (`0.25 → 0.12`), and replaces the additive `miss` update
+   with a proportional clamped update (`ratio = clamp(actual / est, 0.5, 2.0) - 1`)
+   followed by a forward `8.0 ms` minimum per-row floor. Under the old additive
+   update, cold-cache expert misses at `w = 2..3` pushed `verify_ms[w]` up by
+   `0.10 × miss` while `verify_ms[5]` only moved `0.05 × miss`, inverting the
+   marginal row cost and ratcheting long-context prompts onto `w = 5` (costing
+   7–15% through extra SSD expert reads).
+
+Standalone microbenchmarks on gfx1151 (`[129280, 5120]` / `[129280, 256]`):
+
+| Kernel | `main` | `E139` | Speedup |
+| --- | ---: | ---: | ---: |
+| Output head `n = 1` (`Q6_K` vs `Q2_S64`) | 2.343 ms | 0.831 ms | 2.82× |
+| Output head `n = 5` (`Q6_K` vs `Q2_S64`) | 2.558 ms | 0.924 ms | 2.77× (−1.634 ms) |
+| Output head `n = 10` (`Q6_K` vs `Q2_S64`) | 2.680 ms | 1.402 ms | 1.91× (−1.278 ms) |
+| Markov selection ×5 (FP16 vs `Q4_M256` + exact `Q6_K` top-128) | 1.510 ms | 0.380 ms | 3.97× (−1.130 ms) |
+| **Combined head + Markov (`n = 5`)** | **4.068 ms** | **1.304 ms** | **3.12× (−2.764 ms)** |
+
+Also tested inline-`asm` `v_cvt_f32_ubyte` in `Q2_K` (`Format<10>`) routed
+experts (`ds41_expert_gemv.hip.cpp`), which regressed 3–4% (`1.916 → 1.983 ms`
+at `n = 5`, `3.522 → 3.689 ms` at `n = 10`) due to compiler scheduling
+constraints; reverted.
+
+Built with `nix build` at Gufo `60c48924` (base `d78c487`). Streamed
+`UD-IQ2_XXS` with `MXFP8` Engram, DSpark `Q2K-Q4K` and vision, `accelerator-performance`,
+fresh server and disk cache per arm, order `A1_main → B1_it2 → B2_it2 → A2_main`:
+
+- **Greedy 24 prompts (8 short think, 8 short no-think, 4 long 35K–56K no-think,
+  4 long 35K–56K think, 400 tokens each) + 2-way concurrency (300+300 tokens).**
+  104/104 replies SHA-256 identical across all four arms:
+
+| Workload | `main` (A1 / A2 / Mean) | `E139` (B1 / B2 / Mean) | Delta | `ac/dr` (A → B) |
+| --- | ---: | ---: | ---: | ---: |
+| `short_think` (8) | 28.69 / 29.18 / 28.93 | 29.35 / 29.82 / 29.59 | +2.26% | 0.741 → 0.724 |
+| `short_nothink` (8) | 29.99 / 29.67 / 29.83 | 30.25 / 30.50 / 30.38 | +1.84% | 0.746 → 0.731 |
+| `long_nothink` (4, 35K–56K) | 25.59 / 26.29 / 25.94 | 28.40 / 27.64 / 28.02 | +8.01% | 0.599 → 0.687 |
+| `long_think` (4, 35K–56K) | 28.35 / 27.79 / 28.07 | 30.05 / 29.77 / 29.91 | +6.54% | 0.585 → 0.695 |
+| **All 24 greedy prompts** | 28.25 / 28.40 / **28.33** | 29.51 / 29.52 / **29.51** | **+4.18%** (22/24 wins) | 0.679 → 0.713 |
+| **`concurrent_2way` (agg)** | 26.79 / 26.60 / **26.69** | 28.70 / 29.16 / **28.93** | **+8.36%** | — |
+
+- **Sampled coding-agent replay (53 requests, `pi-session.jsonl.gz`, `T=1.0`,
+  exact `p/q`, seed 1234):**
+
+| Subset | `main` (A1 / A2 / Mean) | `E139` (B1 / B2 / Mean) | Delta | `ac/dr` (A → B) |
+| --- | ---: | ---: | ---: | ---: |
+| All 53 requests (5,499 vs 5,025 tok) | 39.17 / 38.87 / **39.02** | 40.13 / 40.45 / **40.29** | **+3.26%** | 0.829 → 0.819 |
+| Identical 31/53 requests (2,270 tok) | 49.10 / 49.64 / **49.37** | 49.99 / 50.35 / **50.17** | **+1.63%** | 0.929 → 0.933 |
+
+Self-deterministic (`B1` == `B2`, 53/53); exact `p/q` preserves the target
+distribution while `Q4_M256` Markov proposals shift 22 seeded draws on near-ties.
+
+- **Verification:** `14/14` `deepseek41flash.*` tests pass (including new
+  `Q2S64MarkovQ4Case` in `mmq_typed` checking `n=5 == n=1` bit-identity and
+  greedy/sampled `Q8_0`/`Q5_K`/`Q6_K` reranking); `--sessions 2` functional
+  suites `conversation`, `tools`, `batch`, `long-context`, `image-inputs` and
+  `cache` (all 14 sub-cases including disk restart) pass. Retained.
+  [Runs](artifacts/2026-11-27-dspark-head-policy/runs.json).
 
 ## Backlog measurements without an E-number
 

@@ -1801,9 +1801,19 @@ static uint64_t dspark_resident_bytes(const ds41_dspark_model* dspark) {
   for (const ds41_dspark_source& source : dspark->sources) {
     const bool widen = source.src->type == DS41_TENSOR_F16 && source.dst != &dspark->markov_w1 &&
                        source.dst != &dspark->markov_w2;
-    const uint64_t bytes = widen ? source.src->elements * sizeof(float) : source.src->bytes;
+    const bool q4_w2 = source.dst == &dspark->markov_w2 &&
+                       source.src->type == DS41_TENSOR_F16 &&
+                       source.dst->k == DS41_DSPARK_MARKOV_RANK &&
+                       source.dst->rows == DS41_N_VOCAB;
+    const uint64_t bytes =
+        q4_w2 ? (((uint64_t)DS41_N_VOCAB * 128 + 255) / 256 * 256 +
+                 (uint64_t)DS41_N_VOCAB * 16)
+              : (widen ? source.src->elements * sizeof(float)
+                       : source.src->bytes);
     total += (bytes + 255) / 256 * 256;
   }
+  total +=
+      (uint64_t)DS41_N_VOCAB * (DS41_N_EMBD / 256) * DS41_V41_Q2S64_BLOCK_BYTES;
   return total;
 }
 
@@ -2151,10 +2161,12 @@ int ds41_engine_open(ds41_engine** out, const ds41_engine_options* opt) {
         *out = NULL;
         return 1;
       }
+      (void)ds41_dspark_prepare_head(e);
       gufo::server::Logger::LogFormatted(
           gufo::server::LogLevel::kInfo, "ds41",
           "DSpark drafter %s: %.2f GiB resident", opt->dspark_model_path,
-          (double)e->dspark->device_bytes / 1073741824.0);
+          (double)(e->dspark->device_bytes + e->dspark->draft_head_bytes) /
+              1073741824.0);
     }
 
     if (streaming) {

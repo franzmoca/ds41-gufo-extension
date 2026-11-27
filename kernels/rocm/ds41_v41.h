@@ -44,6 +44,27 @@ int ds41_v41_gemv_pair(int type, const void* w1, float* y1, uint32_t m1, const v
  * clamp(up x, +-limit), for n tokens of k floats (y rows m floats). */
 int ds41_v41_gemv_swiglu(int type, const void* gate, const void* up, const float* x, float* y, uint32_t m, uint32_t k,
                          float limit, int slices, uint32_t n);
+/* Draft-only 2-bit symmetric LM head (Q2_S64: 72 bytes per 256 weights) and
+ * MALL-resident 4-bit symmetric Markov W2 (Q4_M256: 128 B qs + 16 B scales per
+ * 256-dim row) with top-128 exact target-head reranking. */
+#define DS41_V41_Q2S64_BLOCK_BYTES 72u
+#define DS41_V41_Q2S64_MAX_TOKENS 16u
+#define DS41_V41_MARKOV_RERANK_SCRATCH_BYTES 8192u
+struct ds41_v41_proposal;
+int ds41_v41_quantize_q2s64(int src_type, const void* src, void* dst,
+                            uint32_t m, uint32_t k);
+int ds41_v41_gemv_q2s64(const void* w, const float* x, float* y, uint32_t m,
+                        uint32_t k, uint32_t n);
+int ds41_v41_quantize_markov_q4(const uint16_t* w2_f16, uint32_t* dst_qs,
+                                uint16_t* dst_scales, uint32_t vocab);
+int ds41_v41_markov_q4_rerank(const uint32_t* w2_qs, const uint16_t* w2_scales,
+                              const float* markov_x, const float* approx_logits,
+                              int exact_type, const void* exact_w,
+                              const float* head_x, uint32_t vocab, uint32_t k,
+                              int stochastic, const uint32_t* draw,
+                              float temperature, void* scratch,
+                              struct ds41_v41_proposal* proposal,
+                              int32_t* tokens, uint32_t token_index);
 /* Decode routed experts in IQ1_S, IQ1_M, IQ2_XXS, IQ2_XS or IQ2_S with FP32
  * activations: y[s, 0:m] = W[ids[s]] x_s for s < slots, x_s = x + (s /
  * slots_per_x) * x_slot (x_slot 0 shares one input); expert e's blocks start

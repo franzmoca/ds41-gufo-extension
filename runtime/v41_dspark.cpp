@@ -99,6 +99,9 @@ struct ds41_dspark_scratch {
   ds41_v41_proposal* proposals = nullptr;
   float *main_raw = nullptr, *main_x = nullptr, *main_kv = nullptr, *main_kvn = nullptr;
   float* head_x = nullptr;     // the drafted rows' final norms, compacted for the target head
+  unsigned char* markov_rerank_scratch = nullptr;
+  std::vector<float>
+      noise_host;  // cached dequantized DS41_DSPARK_NOISE_TOKEN row
   /* Pinned staging for a draft's uploads and downloads. */
   unsigned char* staging = nullptr;
   /* hc_mix side stream: overlaps the 6 stage mixes with attention and MoE. */
@@ -189,27 +192,44 @@ bool alloc_scratch(ds41_dspark_scratch& s) {
           hipSuccess) {
     s.mix_stream = nullptr;
   }
-  return s.alloc(&s.h, r * hd) && s.alloc(&s.h2, r * hd) && s.alloc(&s.xn, r * kDim) &&
-         s.alloc(&s.mixes, r * kMixes) && s.alloc(&s.pre[0], r * kHc) && s.alloc(&s.pre[1], r * kHc) &&
-         s.alloc(&s.post, r * kHc) && s.alloc(&s.comb, r * kHc * kHc) && s.alloc(&s.ffn_post, r * kHc) &&
-         s.alloc(&s.ffn_comb, r * kHc * kHc) && s.alloc(&s.qa, r * DS41_N_LORA_Q) &&
-         s.alloc(&s.qr, r * DS41_N_LORA_Q) && s.alloc(&s.q, r * kQDim) && s.alloc(&s.kv, r * kHeadDim) &&
-         s.alloc(&s.kvn, r * kHeadDim) && s.alloc(&s.o, r * kQDim) &&
-         s.alloc(&s.oa, r * DS41_N_OUT_GROUP * DS41_N_LORA_O) && s.alloc(&s.attn_out, r * kDim) &&
-         s.alloc(&s.router, r * DS41_DSPARK_EXPERTS) && s.alloc(&s.route_w, r * kRouted) &&
+  return s.alloc(&s.h, r * hd) && s.alloc(&s.h2, r * hd) &&
+         s.alloc(&s.xn, r * kDim) && s.alloc(&s.mixes, r * kMixes) &&
+         s.alloc(&s.pre[0], r * kHc) && s.alloc(&s.pre[1], r * kHc) &&
+         s.alloc(&s.post, r * kHc) && s.alloc(&s.comb, r * kHc * kHc) &&
+         s.alloc(&s.ffn_post, r * kHc) && s.alloc(&s.ffn_comb, r * kHc * kHc) &&
+         s.alloc(&s.qa, r * DS41_N_LORA_Q) &&
+         s.alloc(&s.qr, r * DS41_N_LORA_Q) && s.alloc(&s.q, r * kQDim) &&
+         s.alloc(&s.kv, r * kHeadDim) && s.alloc(&s.kvn, r * kHeadDim) &&
+         s.alloc(&s.o, r * kQDim) &&
+         s.alloc(&s.oa, r * DS41_N_OUT_GROUP * DS41_N_LORA_O) &&
+         s.alloc(&s.attn_out, r * kDim) &&
+         s.alloc(&s.router, r * DS41_DSPARK_EXPERTS) &&
+         s.alloc(&s.route_w, r * kRouted) &&
          s.alloc(&s.route_ids, r * kRouted) &&
-         s.alloc(&s.expert_plan, DS41_V41_EXPERT_PLAN_INTS(DS41_V41_EXPERT_PLAN_COLS * kRouted)) && s.alloc(&s.g, r * kRouted * DS41_N_FF_EXP) &&
-         s.alloc(&s.u, r * kRouted * DS41_N_FF_EXP) && s.alloc(&s.mid, r * kRouted * DS41_N_FF_EXP) &&
-         s.alloc(&s.down, r * kRouted * kDim) && s.alloc(&s.sg, r * DS41_N_FF_EXP) &&
-         s.alloc(&s.su, r * DS41_N_FF_EXP) && s.alloc(&s.sm, r * DS41_N_FF_EXP) && s.alloc(&s.sd, r * kDim) &&
-         s.alloc(&s.logits, r * DS41_N_VOCAB) && s.alloc(&s.markov_x, DS41_DSPARK_MARKOV_RANK) &&
-         s.alloc(&s.bias, DS41_N_VOCAB) && s.alloc(&s.tokens, (uint64_t)(kRows + 1) * DS41_DSPARK_MAX_BATCH) && s.alloc(&s.candidate_ids, DS41_DSPARK_CANDIDATES) &&
+         s.alloc(&s.expert_plan, DS41_V41_EXPERT_PLAN_INTS(
+                                     DS41_V41_EXPERT_PLAN_COLS * kRouted)) &&
+         s.alloc(&s.g, r * kRouted * DS41_N_FF_EXP) &&
+         s.alloc(&s.u, r * kRouted * DS41_N_FF_EXP) &&
+         s.alloc(&s.mid, r * kRouted * DS41_N_FF_EXP) &&
+         s.alloc(&s.down, r * kRouted * kDim) &&
+         s.alloc(&s.sg, r * DS41_N_FF_EXP) &&
+         s.alloc(&s.su, r * DS41_N_FF_EXP) &&
+         s.alloc(&s.sm, r * DS41_N_FF_EXP) && s.alloc(&s.sd, r * kDim) &&
+         s.alloc(&s.logits, r * DS41_N_VOCAB) &&
+         s.alloc(&s.markov_x, DS41_DSPARK_MARKOV_RANK) &&
+         s.alloc(&s.bias, DS41_N_VOCAB) &&
+         s.alloc(&s.tokens, (uint64_t)(kRows + 1) * DS41_DSPARK_MAX_BATCH) &&
+         s.alloc(&s.candidate_ids, DS41_DSPARK_CANDIDATES) &&
          s.alloc(&s.candidate_logits, DS41_DSPARK_CANDIDATES) &&
-         s.alloc(&s.draws, r) && s.alloc(&s.proposals, r) && s.alloc(&s.markov_v, DS41_V41_MARKOV_CANDIDATES) &&
+         s.alloc(&s.draws, r) && s.alloc(&s.proposals, r) &&
+         s.alloc(&s.markov_v, DS41_V41_MARKOV_CANDIDATES) &&
          s.alloc(&s.confidence, r) &&
-         s.alloc(&s.markov_i, DS41_V41_MARKOV_CANDIDATES) && s.alloc(&s.main_raw, f * kDim) &&
-         s.alloc(&s.main_x, f * kDim) && s.alloc(&s.main_kv, f * kHeadDim) && s.alloc(&s.main_kvn, f * kHeadDim) &&
-         s.alloc(&s.head_x, r * kDim);
+         s.alloc(&s.markov_i, DS41_V41_MARKOV_CANDIDATES) &&
+         s.alloc(&s.main_raw, f * kDim) && s.alloc(&s.main_x, f * kDim) &&
+         s.alloc(&s.main_kv, f * kHeadDim) &&
+         s.alloc(&s.main_kvn, f * kHeadDim) && s.alloc(&s.head_x, r * kDim) &&
+         s.alloc(&s.markov_rerank_scratch,
+                 DS41_V41_MARKOV_RERANK_SCRATCH_BYTES);
 }
 
 /* Stores rows of positions pos0 .. pos0 + n - 1 into a ring, slot pos % DS41_N_SWA. */
@@ -406,16 +426,29 @@ bool ds41_dspark_has_confidence(const ds41_dspark_model* m) {
 }
 
 bool ds41_dspark_upload(ds41_dspark_model* m) {
-  /* F16 tensors widen to F32, except the Markov tables, which their gather and matmul read as F16. */
+  /* F16 tensors widen to F32, except the Markov tables: W1 stays F16, and
+   * rank-256 F16 W2 quantizes into MALL-resident Q4_M256 (18.6 MB vs 66.2 MB).
+   */
   const auto widen = [m](const ds41_dspark_source& src) {
     return src.src->type == DS41_TENSOR_F16 && src.dst != &m->markov_w1 && src.dst != &m->markov_w2;
   };
+  const auto q4_w2 = [m](const ds41_dspark_source& src) {
+    return src.dst == &m->markov_w2 && src.src->type == DS41_TENSOR_F16 &&
+           src.dst->k == DS41_DSPARK_MARKOV_RANK &&
+           src.dst->rows == DS41_N_VOCAB;
+  };
   constexpr uint64_t kAlign = 256;
   constexpr uint64_t kChunk = 64ull << 20;
+  constexpr uint64_t kQ4QsBytes =
+      ((uint64_t)DS41_N_VOCAB * 128 + kAlign - 1) / kAlign * kAlign;
+  constexpr uint64_t kQ4TotalBytes = kQ4QsBytes + (uint64_t)DS41_N_VOCAB * 16;
   std::vector<uint64_t> offsets;
   uint64_t total = 0;
   for (const ds41_dspark_source& src : m->sources) {
-    const uint64_t bytes = widen(src) ? src.src->elements * sizeof(float) : src.src->bytes;
+    const uint64_t bytes =
+        q4_w2(src)
+            ? kQ4TotalBytes
+            : (widen(src) ? src.src->elements * sizeof(float) : src.src->bytes);
     offsets.push_back(total);
     total += (bytes + kAlign - 1) / kAlign * kAlign;
   }
@@ -442,7 +475,32 @@ bool ds41_dspark_upload(ds41_dspark_model* m) {
     ds41_dspark_tensor* dst = m->sources[i].dst;
     uint8_t* out = static_cast<uint8_t*>(m->device) + offsets[i];
     const off_t at = (off_t)(t->abs_offset - m->file.shard_offset[0]);
-    if (widen(m->sources[i])) {
+    if (q4_w2(m->sources[i])) {
+      constexpr uint32_t kRowChunk = 32768;
+      constexpr uint64_t kRowBytes = DS41_DSPARK_MARKOV_RANK * sizeof(uint16_t);
+      void* tmp_dev = nullptr;
+      ok = hipMalloc(&tmp_dev, (uint64_t)kRowChunk * kRowBytes) == hipSuccess;
+      auto* qs = reinterpret_cast<uint32_t*>(out);
+      auto* sc_out = reinterpret_cast<uint16_t*>(out + kQ4QsBytes);
+      for (uint32_t r0 = 0; ok && r0 < DS41_N_VOCAB; r0 += kRowChunk) {
+        const uint32_t rows = std::min(kRowChunk, DS41_N_VOCAB - r0);
+        const uint64_t bytes = (uint64_t)rows * kRowBytes;
+        ok = pread(fd, staging, bytes,
+                   at + (off_t)((uint64_t)r0 * kRowBytes)) == (ssize_t)bytes &&
+             hipMemcpy(tmp_dev, staging, bytes, hipMemcpyHostToDevice) ==
+                 hipSuccess &&
+             ds41_v41_quantize_markov_q4(
+                 static_cast<const uint16_t*>(tmp_dev), qs + (uint64_t)r0 * 32,
+                 sc_out + (uint64_t)r0 * 8, rows) == 0 &&
+             hipDeviceSynchronize() == hipSuccess;
+      }
+      if (tmp_dev)
+        (void)hipFree(tmp_dev);
+      if (ok) {
+        m->markov_w2_qs = qs;
+        m->markov_w2_scales = sc_out;
+      }
+    } else if (widen(m->sources[i])) {
       half.resize(t->elements);
       full.resize(t->elements);
       ok = pread(fd, half.data(), t->bytes, at) == (ssize_t)t->bytes;
@@ -467,10 +525,49 @@ bool ds41_dspark_upload(ds41_dspark_model* m) {
   return ok;
 }
 
+bool ds41_dspark_prepare_head(ds41_engine* engine) {
+  if (!engine || !engine->dspark)
+    return false;
+  ds41_dspark_model* m = engine->dspark;
+  uint32_t type = 0, rows = 0, k = 0;
+  const void* exact_p = nullptr;
+  if (!ds41_engine_output_weight(engine, &type, &exact_p, &rows, &k) ||
+      rows != DS41_N_VOCAB || k != kDim || k % 256 != 0)
+    return false;
+  if (type != DS41_TENSOR_Q8_0 && type != DS41_TENSOR_Q4_K &&
+      type != DS41_TENSOR_Q5_K && type != DS41_TENSOR_Q6_K)
+    return false;
+  const uint64_t bytes =
+      (uint64_t)rows * (k / 256) * DS41_V41_Q2S64_BLOCK_BYTES;
+  void* buf = nullptr;
+  if (hipMalloc(&buf, bytes) != hipSuccess) {
+    (void)hipGetLastError();
+    return false;
+  }
+  if (ds41_v41_quantize_q2s64((int)type, exact_p, buf, rows, k) != 0 ||
+      hipDeviceSynchronize() != hipSuccess) {
+    (void)hipGetLastError();
+    (void)hipFree(buf);
+    return false;
+  }
+  m->draft_head = buf;
+  m->draft_head_bytes = bytes;
+  m->draft_head_exact_type = type;
+  m->draft_head_exact_p = exact_p;
+  return true;
+}
+
 void ds41_dspark_free(ds41_dspark_model* m) {
   if (!m) return;
   delete m->scratch;
   m->scratch = nullptr;
+  if (m->draft_head)
+    (void)hipFree(m->draft_head);
+  m->draft_head = nullptr;
+  m->draft_head_bytes = 0;
+  m->draft_head_exact_p = nullptr;
+  m->markov_w2_qs = nullptr;
+  m->markov_w2_scales = nullptr;
   if (m->device) (void)hipFree(m->device);
   m->device = nullptr;
 }
@@ -608,11 +705,14 @@ bool ds41_dspark_draft_batch(ds41_dspark_draft_request* requests, uint32_t count
   std::fill_n(stage_draws, n, 0u);
   bool ok = true;
   bool any_stochastic = false;
+  if (sc.noise_host.empty()) {
+    const int noise_tok = DS41_DSPARK_NOISE_TOKEN;
+    sc.noise_host.resize(kDim);
+    ok = ds41_decoder_embed(jobs[0].req->state->decoder, &noise_tok, 1,
+                            sc.noise_host.data());
+  }
   for (Job& j : jobs) {
     const ds41_dspark_draft_request& r = *j.req;
-    int block[kRows];
-    block[0] = r.anchor;
-    for (uint32_t t = 1; t < kRows; t++) block[t] = DS41_DSPARK_NOISE_TOKEN;
     stage_tokens[(uint64_t)(j.row0 / kRows) * kTokenStride] = r.anchor;
     j.stochastic = r.sampler && r.sampler->draws && r.sampler->retain;
     if (j.stochastic) {
@@ -620,8 +720,12 @@ bool ds41_dspark_draft_batch(ds41_dspark_draft_request* requests, uint32_t count
           r.sampler->draws(r.sampler->ctx, r.count, stage_draws + j.row0);
       any_stochastic = true;
     }
-    ok = ok && ds41_decoder_embed(r.state->decoder, block, kRows,
-                                  reinterpret_cast<float*>(sc.staging + kStageRows) + (uint64_t)j.row0 * kDim);
+    float* dst_rows = reinterpret_cast<float*>(sc.staging + kStageRows) +
+                      (uint64_t)j.row0 * kDim;
+    ok = ok && ds41_decoder_embed(r.state->decoder, &r.anchor, 1, dst_rows);
+    for (uint32_t t = 1; ok && t < kRows; t++)
+      memcpy(dst_rows + (uint64_t)t * kDim, sc.noise_host.data(),
+             kDim * sizeof(float));
   }
   /* Pinned, asynchronous uploads queue behind the work in flight (the
    * previous cycle's injection) instead of waiting for it. */
@@ -670,10 +774,22 @@ bool ds41_dspark_draft_batch(ds41_dspark_draft_request* requests, uint32_t count
     head_rows += j.req->count;
   }
   const float* head_x = jobs.size() > 1 ? sc.head_x : sc.xn;
-  constexpr uint32_t kHeadRows = 8;
-  for (uint32_t r = 0; r < head_rows && ok; r += kHeadRows)
-    ok = ds41_decoder_output_head(jobs[0].req->state->decoder, head_x + (uint64_t)r * kDim,
-                                  sc.logits + (uint64_t)r * DS41_N_VOCAB, std::min(kHeadRows, head_rows - r));
+  const bool fast_head = m->draft_head != nullptr && m->markov_w2_qs != nullptr;
+  if (fast_head) {
+    for (uint32_t r = 0; r < head_rows && ok; r += DS41_V41_Q2S64_MAX_TOKENS)
+      ok = ds41_v41_gemv_q2s64(
+               m->draft_head, head_x + (uint64_t)r * kDim,
+               sc.logits + (uint64_t)r * DS41_N_VOCAB, DS41_N_VOCAB, kDim,
+               std::min<uint32_t>(DS41_V41_Q2S64_MAX_TOKENS, head_rows - r)) ==
+           0;
+  } else {
+    constexpr uint32_t kHeadRows = 8;
+    for (uint32_t r = 0; r < head_rows && ok; r += kHeadRows)
+      ok = ds41_decoder_output_head(jobs[0].req->state->decoder,
+                                    head_x + (uint64_t)r * kDim,
+                                    sc.logits + (uint64_t)r * DS41_N_VOCAB,
+                                    std::min(kHeadRows, head_rows - r));
+  }
   const int format = m->markov_w1.type == DS41_TENSOR_BF16  ? DS41_V41_ROW_BF16
                      : m->markov_w1.type == DS41_TENSOR_F16 ? DS41_V41_ROW_F16
                                                             : DS41_V41_ROW_F32;
@@ -681,9 +797,14 @@ bool ds41_dspark_draft_batch(ds41_dspark_draft_request* requests, uint32_t count
   // cannot affect the requested prefix. The transformer body keeps all five rows.
   // The learned acceptance head reads each row's Markov input.
   const bool has_confidence = ds41_dspark_has_confidence(m);
-  // FP16 W2 rows of the rank fuse the projection into the selection.
-  const bool fused = m->markov_w2.type == DS41_TENSOR_F16 && m->markov_w2.k == DS41_DSPARK_MARKOV_RANK &&
-                     m->markov_w2.rows == DS41_N_VOCAB && (uintptr_t)m->markov_w2.p % 16 == 0;
+  // MALL-resident Q4_M256 Markov W2 with top-128 exact head reranking, or FP16
+  // W2 fallback.
+  const bool q4_markov =
+      m->markov_w2_qs != nullptr && m->markov_w2_scales != nullptr;
+  const bool fused = !q4_markov && m->markov_w2.type == DS41_TENSOR_F16 &&
+                     m->markov_w2.k == DS41_DSPARK_MARKOV_RANK &&
+                     m->markov_w2.rows == DS41_N_VOCAB &&
+                     (uintptr_t)m->markov_w2.p % 16 == 0;
   const auto* w2 = static_cast<const uint16_t*>(m->markov_w2.p);
   for (uint32_t ji = 0; ji < jobs.size() && ok; ji++) {
     const Job& j = jobs[ji];
@@ -691,7 +812,8 @@ bool ds41_dspark_draft_batch(ds41_dspark_draft_request* requests, uint32_t count
     const bool learned = r.confidence && has_confidence;
     int32_t* job_tokens = sc.tokens + (uint64_t)(j.row0 / kRows) * kTokenStride;
     for (uint32_t i = 0; i < r.count && ok; i++) {
-      const float* row = sc.logits + (uint64_t)(logits_row0[ji] + i) * DS41_N_VOCAB;
+      const uint32_t logit_idx = logits_row0[ji] + i;
+      const float* row = sc.logits + (uint64_t)logit_idx * DS41_N_VOCAB;
       const uint32_t at = j.row0 + i;
       ok = ds41_v41_gather_row(m->markov_w1.p, format, job_tokens, i, sc.markov_x, DS41_DSPARK_MARKOV_RANK) == 0 &&
            (!learned || ds41_v41_dspark_confidence(sc.h + (uint64_t)j.row0 * hd, sc.pre[0] + (uint64_t)j.row0 * kHc,
@@ -699,7 +821,16 @@ bool ds41_dspark_draft_batch(ds41_dspark_draft_request* requests, uint32_t count
                                                    m->confidence_bias.p ? f32(m->confidence_bias) : nullptr, kDim,
                                                    DS41_DSPARK_MARKOV_RANK, i, sc.confidence + j.row0) == 0);
       if (!ok) break;
-      if (fused)
+      if (q4_markov)
+        ok = ds41_v41_markov_q4_rerank(
+                 m->markov_w2_qs, m->markov_w2_scales, sc.markov_x, row,
+                 (int)m->draft_head_exact_type,
+                 fast_head ? m->draft_head_exact_p : nullptr,
+                 head_x + (uint64_t)logit_idx * kDim, DS41_N_VOCAB, kDim,
+                 j.stochastic ? 1 : 0, sc.draws + at, j.temperature,
+                 sc.markov_rerank_scratch, sc.proposals + at, job_tokens,
+                 i + 1) == 0;
+      else if (fused)
         ok = (j.stochastic ? ds41_v41_markov_propose(w2, sc.markov_x, row, DS41_N_VOCAB, sc.markov_v, sc.markov_i,
                                                      sc.candidate_ids, sc.candidate_logits, sc.draws + at,
                                                      j.temperature, sc.proposals + at, job_tokens + i + 1)

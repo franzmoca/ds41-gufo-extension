@@ -111,9 +111,11 @@ Every DeepSeek V4.1 decode goes through the speculative step (`DecodeStep`
    restarts with each request. Sampled: full width. Neither: `draft_width`.
    Drafted widths are cut after drafting.
 2. **draft** (`ds41_dspark_draft_batch`): embeds and uploads the anchor and
-   noise rows, runs three drafter stages, the target's output head over the
-   drafted rows, five sequential Markov selections (66 MB FP16 W2 each) and
-   the confidence head, then downloads the tokens, its only host round trip.
+   cached noise rows, runs three drafter stages, screens the drafted rows
+   through a draft-only `Q2_S64` LM head (`v_dot2_f32_f16`, 186 MB), runs five
+   sequential MALL-resident `Q4_M256` Markov selections (18.6 MB) with top-128
+   exact target-head reranking (E139) and the confidence head, then downloads
+   the tokens, its only host round trip.
 3. **evaluate**: `ds41_decoder_eval` (one row),
    `ds41_decoder_eval_speculative` (several rows, single-token arithmetic
    per row) or `ds41_decoder_eval_joint` (several sessions).
