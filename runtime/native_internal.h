@@ -72,10 +72,11 @@ bool ds41_model_string_array_next(ds41_string_iterator* iterator,
 
 ds41_vocab* ds41_vocab_create(const ds41_model* model);
 void ds41_vocab_destroy(ds41_vocab* vocab);
-void ds41_vocab_tokenize(const ds41_vocab* vocab, const char* text,
+void ds41_vocab_tokenize(const ds41_vocab* vocab, const char* text, size_t len,
                          ds41_tokens* tokens);
 void ds41_vocab_tokenize_rendered_chat(const ds41_vocab* vocab,
-                                       const char* text, ds41_tokens* tokens,
+                                       const char* text, size_t len,
+                                       ds41_tokens* tokens,
                                        const ds41_text_span* literal = nullptr,
                                        size_t n_literal = 0);
 char* ds41_vocab_token_text(const ds41_vocab* vocab, int token, size_t* length);

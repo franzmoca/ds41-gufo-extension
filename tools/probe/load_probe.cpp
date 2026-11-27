@@ -879,9 +879,9 @@ int main(int argc, char** argv) {
       }
       ds41_tokens tokens{};
       if (rendered)
-        ds41_tokenize_rendered_chat(engine, text.c_str(), &tokens);
+        ds41_tokenize_rendered_chat(engine, text.data(), text.size(), &tokens);
       else
-        ds41_tokenize_text(engine, text.c_str(), &tokens);
+        ds41_tokenize_text(engine, text.data(), text.size(), &tokens);
       std::printf("ids");
       for (int i = 0; i < tokens.len; ++i)
         std::printf(" %d", tokens.v[i]);
