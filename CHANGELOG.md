@@ -21,6 +21,14 @@ Notable user-facing changes are recorded here. Versions follow `version` in
   the 31 identical replies, exact `p/q` preserved)
   ([E139](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e139--dspark-q2_s64-screening-head-mall-resident-q4-markov-rerank-and-monotonic-width-policy-retained)).
 
+### Fixes
+
+* **tokenizer:** a NUL (U+0000) in request text, such as a tool result from
+  `cat` of a binary file, now tokenizes as a byte. Before, the prompt ended at
+  the first NUL: the model never saw the rest of that message or any later
+  one, and every following turn of the conversation sent it the same
+  truncated prompt ([#21](https://github.com/franzmoca/ds41-gufo-extension/issues/21)).
+
 ## 0.5.1 (2026-11-24)
 
 Built on upstream Gufo `60c48924`; needs extension API 0.3.43 or later.

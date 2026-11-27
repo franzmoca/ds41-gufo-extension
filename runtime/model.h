@@ -208,12 +208,13 @@ int ds41_engine_vocab_size(const ds41_engine* engine);
 const char* ds41_engine_model_name(const ds41_engine* engine);
 
 void ds41_tokens_free(ds41_tokens* tokens);
-void ds41_tokenize_text(ds41_engine* engine, const char* text,
+/* `text` is `len` bytes and may hold NULs, which tokenize as bytes. */
+void ds41_tokenize_text(ds41_engine* engine, const char* text, size_t len,
                         ds41_tokens* out);
 /* Control-token spellings become their tokens, except where they overlap
  * one of `literal` (ordered byte ranges of `text`), which stays text. */
 void ds41_tokenize_rendered_chat(ds41_engine* engine, const char* text,
-                                 ds41_tokens* out,
+                                 size_t len, ds41_tokens* out,
                                  const ds41_text_span* literal = nullptr,
                                  size_t n_literal = 0);
 /* Where the last pretokenizer piece of plain `text` starts: appending to

@@ -518,8 +518,9 @@ static uint64_t piece_end(const char *text, uint64_t len, uint64_t pos) {
     return pos;
 }
 
-static void bpe_tokenize_text(const ds41_vocab *vocab, const char *text, token_vec *out) {
-    const uint64_t len = strlen(text);
+/* `text` is `len` bytes, NUL included: request text may carry U+0000. */
+static void bpe_tokenize_text(const ds41_vocab *vocab, const char *text,
+                              uint64_t len, token_vec *out) {
     uint64_t pos = 0;
     // Borrow keys only for this immutable text span. Token IDs depend on the
     // vocabulary, so the memo never outlives the call or crosses model reloads.
@@ -614,8 +615,9 @@ void ds41_vocab_destroy(ds41_vocab *vocab) {
 
 void ds41_vocab_tokenize(const ds41_vocab *vocab,
                         const char *text,
+                        size_t len,
                         ds41_tokens *tokens) {
-    bpe_tokenize_text(vocab, text ? text : "", tokens);
+    if (text) bpe_tokenize_text(vocab, text, len, tokens);
 }
 
 size_t ds41_last_piece_start(const char *text, size_t len) {
@@ -629,11 +631,13 @@ size_t ds41_last_piece_start(const char *text, size_t len) {
 
 void ds41_tokenize_text(ds41_engine *engine,
                        const char *text,
+                       size_t len,
                        ds41_tokens *tokens) {
-    ds41_vocab_tokenize(engine->vocab, text, tokens);
+    ds41_vocab_tokenize(engine->vocab, text, len, tokens);
 }
 
-static bool special_token_at(const ds41_vocab *vocab, const char *p, int *token, size_t *len) {
+static bool special_token_at(const ds41_vocab *vocab, const char *p,
+                             size_t avail, int *token, size_t *len) {
     struct special {
         const char *text;
         int token;
@@ -651,7 +655,7 @@ static bool special_token_at(const ds41_vocab *vocab, const char *p, int *token,
 
     for (size_t i = 0; i < sizeof(specials) / sizeof(specials[0]); i++) {
         size_t n = strlen(specials[i].text);
-        if (!strncmp(p, specials[i].text, n)) {
+        if (n <= avail && !memcmp(p, specials[i].text, n)) {
             *token = specials[i].token;
             *len = n;
             return true;
@@ -660,31 +664,21 @@ static bool special_token_at(const ds41_vocab *vocab, const char *p, int *token,
     return false;
 }
 
-static void tokenize_span(const ds41_vocab *vocab,
-                          const char *p,
-                          size_t n,
-                          token_vec *out) {
-    if (!n) return;
-    auto *tmp = static_cast<char *>(tokenizer_malloc(n + 1));
-    memcpy(tmp, p, n);
-    tmp[n] = '\0';
-    bpe_tokenize_text(vocab, tmp, out);
-    free(tmp);
-}
-
 static void tokenize_rendered_chat_vocab(const ds41_vocab *vocab, const char *text,
+                                         size_t text_len,
                                          token_vec *out,
                                          const ds41_text_span *literal,
                                          size_t n_literal) {
-    if (!text) text = "";
+    if (!text) return;
 
     const char *span = text;
     const char *p = text;
+    const char *end = text + text_len;
     size_t next = 0; /* first literal range that may reach past p */
-    while (*p) {
+    while (p < end) {
         int token = -1;
         size_t len = 0;
-        if (special_token_at(vocab, p, &token, &len)) {
+        if (special_token_at(vocab, p, (size_t)(end - p), &token, &len)) {
             /* Request text spells control tokens as characters. */
             const size_t at = (size_t)(p - text);
             while (next < n_literal &&
@@ -694,7 +688,7 @@ static void tokenize_rendered_chat_vocab(const ds41_vocab *vocab, const char *te
                 p++;
                 continue;
             }
-            tokenize_span(vocab, span, (size_t)(p - span), out);
+            bpe_tokenize_text(vocab, span, (uint64_t)(p - span), out);
             token_vec_push(out, token);
             p += len;
             span = p;
@@ -702,15 +696,16 @@ static void tokenize_rendered_chat_vocab(const ds41_vocab *vocab, const char *te
         }
         p++;
     }
-    tokenize_span(vocab, span, (size_t)(p - span), out);
+    bpe_tokenize_text(vocab, span, (uint64_t)(p - span), out);
 }
 
 void ds41_vocab_tokenize_rendered_chat(const ds41_vocab *vocab,
                                       const char *text,
+                                      size_t len,
                                       ds41_tokens *tokens,
                                       const ds41_text_span *literal,
                                       size_t n_literal) {
-    tokenize_rendered_chat_vocab(vocab, text, tokens, literal, n_literal);
+    tokenize_rendered_chat_vocab(vocab, text, len, tokens, literal, n_literal);
 }
 
 static uint32_t utf8_decode_one(const char *s, uint64_t len, uint64_t *pos) {
@@ -814,10 +809,11 @@ bool ds41_vocab_is_stop(const ds41_vocab *vocab, int token) {
 
 void ds41_tokenize_rendered_chat(ds41_engine *engine,
                                 const char *text,
+                                size_t len,
                                 ds41_tokens *tokens,
                                 const ds41_text_span *literal,
                                 size_t n_literal) {
-    ds41_vocab_tokenize_rendered_chat(engine->vocab, text, tokens, literal,
+    ds41_vocab_tokenize_rendered_chat(engine->vocab, text, len, tokens, literal,
                                       n_literal);
 }
 

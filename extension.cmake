@@ -194,6 +194,8 @@ if(ENGINE_ENABLE_HIP)
     LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash)
   _deepseek41flash_test(gguf_loader "cpu;gguf"
     LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash gufo_ext_hip)
+  _deepseek41flash_test(tokenizer "cpu;tokenization"
+    LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash gufo_ext_hip)
   _deepseek41flash_test(checkpoint_size "cpu;cache"
     LINK_LIBRARIES gufo_deepseek41flash_hip gufo_deepseek41flash gufo_ext_hip)
   foreach(name IN ITEMS attention candidate_mask draft_sampling expert_store
