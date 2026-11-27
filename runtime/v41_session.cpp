@@ -85,8 +85,10 @@ struct ds41_session {
    * draft_ms. */
   struct {
     float accept[DS41_DSPARK_BLOCK] = {kAcceptPrior, kAcceptPrior, kAcceptPrior, kAcceptPrior, kAcceptPrior};
-    float cycle_ms[DS41_DSPARK_BLOCK + 1] = {42.4f, 69.6f, 83.6f, 95.5f, 106.1f, 117.2f};
-    float draft_ms = 8.0f;
+    /* Verification time alone for w drafts (verify_ms[0] is a plain step). */
+    float verify_ms[DS41_DSPARK_BLOCK + 1] = {42.4f, 61.6f, 75.6f,
+                                              87.5f, 98.1f, 109.2f};
+    float draft_ms = 5.5f;
     float gain_ms = kGainPrior;
     uint32_t plain = 0;   // plain steps since the last cycle
     uint32_t probe = kProbeFirst;  // plain steps before a one-draft cycle re-measures
@@ -418,8 +420,8 @@ namespace {
 /* A cycle's time also moves the other widths' estimates by kPolicyShift of
  * its error: widths the policy rarely picks otherwise keep their prior. */
 constexpr float kPolicyRate = 0.1f, kPolicyRelax = 0.02f, kPolicyShift = 0.05f;
-/* gain_ms follows the request's drafts faster: acceptance shifts with content. */
-constexpr float kGainRate = 0.25f;
+/* gain_ms follows the request's drafts smoothly across rejection runs. */
+constexpr float kGainRate = 0.12f;
 
 /* The drafts per cycle that maximize the expected emitted tokens over the
  * cycle's time; accept[k] estimates P(draft k + 1 is accepted | the drafts
@@ -429,13 +431,14 @@ constexpr float kGainRate = 0.25f;
 uint32_t best_width(const ds41_session* s, const float* accept, uint32_t limit, bool drafted = false,
                     float* gain = nullptr) {
   const auto& p = s->policy;
-  const float sunk = drafted ? p.draft_ms : 0.0f;
+  const float add_draft = drafted ? 0.0f : p.draft_ms;
   uint32_t best_w = 0;
-  float best = 1.0f / p.cycle_ms[0], best_expected = 1.0f, expected = 1.0f, reach = 1.0f;
+  float best = 1.0f / std::max(p.verify_ms[0], 1.0f), best_expected = 1.0f,
+        expected = 1.0f, reach = 1.0f;
   for (uint32_t w = 1; w <= limit; w++) {
     reach *= accept[w - 1];
     expected += reach;
-    const float cost = std::max(p.cycle_ms[w] - sunk, 1.0f);
+    const float cost = std::max(p.verify_ms[w] + add_draft, 1.0f);
     if (expected / cost > best) {
       best = expected / cost;
       best_w = w;
@@ -443,7 +446,9 @@ uint32_t best_width(const ds41_session* s, const float* accept, uint32_t limit, 
     }
   }
   if (gain)
-    *gain = best_w ? std::max(0.0f, best_expected * p.cycle_ms[0] - (p.cycle_ms[best_w] - sunk)) : 0.0f;
+    *gain = best_w ? std::max(0.0f, best_expected * p.verify_ms[0] -
+                                        (p.verify_ms[best_w] + add_draft))
+                   : 0.0f;
   return best_w;
 }
 
@@ -675,7 +680,8 @@ ds41_dspark_draft_request draft_request(Cycle& c) {
 void learned_outcome(ds41_session* s, const Cycle& c, uint32_t emitted, std::chrono::steady_clock::time_point t2) {
   auto& p = s->policy;
   float gain = 0.0f;
-  if (c.tail != 0) gain = c.shared ? c.gain : emitted * p.cycle_ms[0] - ms(c.t1, t2);
+  if (c.tail != 0)
+    gain = c.shared ? c.gain : emitted * p.verify_ms[0] - ms(c.t1, t2);
   if (p.gain_ms > p.draft_ms)
     ema(p.gain_ms, gain, kGainRate);
   else
@@ -906,14 +912,20 @@ int finish(Cycle& c, char* error, size_t capacity) {
   if (c.drafted) learned_outcome(s, c, accepted, t2);
   if (trace && c.learned)
     fprintf(stderr,
-            "ds41: learned pos=%u drafted=%d width=%u emitted=%u conf=%.3f,%.3f,%.3f,%.3f,%.3f draft=%.1fms "
+            "ds41: learned pos=%u drafted=%d width=%u emitted=%u "
+            "conf=%.3f,%.3f,%.3f,%.3f,%.3f draft=%.1fms "
             "verify=%.1fms gain_ms=%.1f draft_ms=%.1f plain_ms=%.1f\n",
-            c.first, c.drafted, c.tail, accepted, c.confidence[0], c.confidence[1], c.confidence[2], c.confidence[3],
-            c.confidence[4], c.drafted ? ms(c.t0, c.t1) : 0.0f, ms(c.drafted ? c.t1 : c.t0, t2), p.gain_ms, p.draft_ms,
-            p.cycle_ms[0]);
+            c.first, c.drafted, c.tail, accepted, c.confidence[0],
+            c.confidence[1], c.confidence[2], c.confidence[3], c.confidence[4],
+            c.drafted ? ms(c.t0, c.t1) : 0.0f, ms(c.drafted ? c.t1 : c.t0, t2),
+            p.gain_ms, p.draft_ms, p.verify_ms[0]);
   if (m == 1) {
     /* A plain step's time; after a discarded draft, the part after it. */
-    if (!c.shared && (c.plain || c.learned)) ema(p.cycle_ms[0], ms(c.plain ? c.t0 : c.t1, t2));
+    if (!c.shared && (c.plain || c.learned)) {
+      ema(p.verify_ms[0], ms(c.plain ? c.t0 : c.t1, t2));
+      for (uint32_t w = 1; w <= DS41_DSPARK_BLOCK; w++)
+        p.verify_ms[w] = std::max(p.verify_ms[w], p.verify_ms[w - 1] + 8.0f);
+    }
     return 0;
   }
   auto& st = s->stats;
@@ -928,21 +940,40 @@ int finish(Cycle& c, char* error, size_t capacity) {
     st.lookup_copied += c.copied;
     st.lookup_accepted += accepted - 1;
     if (trace)
-      fprintf(stderr, "ds41: lookup pos=%u copied=%u accepted=%u verify=%.1fms\n", c.first, c.copied, accepted - 1,
-              ms(c.t1, t2));
+      fprintf(stderr,
+              "ds41: lookup pos=%u copied=%u accepted=%u verify=%.1fms\n",
+              c.first, c.copied, accepted - 1, ms(c.t1, t2));
     return 0;
   }
   st.support_drafted += c.tail;
   st.support_accepted += accepted - 1;
   st.positional += positional;
   /* Drafts after the first rejection say nothing about their acceptance. */
-  for (uint32_t k = 0; k < std::min(accepted, c.tail); k++) ema(p.accept[k], k + 1 < accepted ? 1.0f : 0.0f);
-  for (uint32_t k = c.tail; k < DS41_DSPARK_BLOCK; k++) ema(p.accept[k], ds41_session::kAcceptPrior, kPolicyRelax);
-  const float miss = c.shared ? 0.0f : ms(c.t0, t2) - p.cycle_ms[c.tail];
-  for (uint32_t w = 1; w <= DS41_DSPARK_BLOCK; w++) p.cycle_ms[w] += (w == c.tail ? kPolicyRate : kPolicyShift) * miss;
+  for (uint32_t k = 0; k < std::min(accepted, c.tail); k++)
+    ema(p.accept[k], k + 1 < accepted ? 1.0f : 0.0f);
+  for (uint32_t k = c.tail; k < DS41_DSPARK_BLOCK; k++)
+    ema(p.accept[k], ds41_session::kAcceptPrior, kPolicyRelax);
+  if (!c.shared) {
+    /* Proportional clamped update + monotonic per-row floor prevents cold
+     * expert-miss spikes at width w from inverting verify_ms[w] >
+     * verify_ms[w+1] and ratcheting the policy onto w = 5. */
+    const float ratio =
+        std::clamp(ms(c.t1, t2) / std::max(p.verify_ms[c.tail], 1.0f), 0.5f,
+                   2.0f) -
+        1.0f;
+    for (uint32_t w = 0; w <= DS41_DSPARK_BLOCK; w++)
+      p.verify_ms[w] = std::max(
+          1.0f,
+          p.verify_ms[w] *
+              (1.0f + (w == c.tail ? kPolicyRate : kPolicyShift) * ratio));
+    for (uint32_t w = 1; w <= DS41_DSPARK_BLOCK; w++)
+      p.verify_ms[w] = std::max(p.verify_ms[w], p.verify_ms[w - 1] + 8.0f);
+  }
   if (trace)
-    fprintf(stderr, "ds41: DSpark pos=%u drafted=%u accepted=%u draft=%.1fms verify=%.1fms\n", c.first, c.tail,
-            accepted - 1, ms(c.t0, c.t1), ms(c.t1, t2));
+    fprintf(stderr,
+            "ds41: DSpark pos=%u drafted=%u accepted=%u draft=%.1fms "
+            "verify=%.1fms\n",
+            c.first, c.tail, accepted - 1, ms(c.t0, c.t1), ms(c.t1, t2));
   return 0;
 }
 

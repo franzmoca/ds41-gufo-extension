@@ -66,12 +66,23 @@ struct ds41_dspark_model {
   /* Optional learned acceptance head: sigmoid(w . [pre-norm hidden; W1 row]
    * + bias). p is null when the drafter ships none. */
   ds41_dspark_tensor confidence, confidence_bias;
+  /* Draft-only 2-bit LM head (Q2_S64) and MALL-resident 4-bit Markov W2
+   * (Q4_M256), with the exact target output head kept for top-128 reranking. */
+  void* draft_head = nullptr;
+  uint64_t draft_head_bytes = 0;
+  uint32_t draft_head_exact_type = 0;
+  const void* draft_head_exact_p = nullptr;
+  uint32_t* markov_w2_qs = nullptr;
+  uint16_t* markov_w2_scales = nullptr;
   struct ds41_dspark_scratch* scratch = nullptr;
 };
 
 /* Uploads the bound sources into one device allocation and allocates the
  * engine-wide draft scratch. Returns false on failure. */
 bool ds41_dspark_upload(ds41_dspark_model* m);
+/* Quantizes the target's output head into the draft-only Q2_S64 head.
+ * Failure leaves draft_head NULL (falls back to the exact target head). */
+bool ds41_dspark_prepare_head(ds41_engine* engine);
 void ds41_dspark_free(ds41_dspark_model* m);
 
 /* Per-session drafter state: the stage rings, valid for positions
@@ -152,5 +163,8 @@ const float* ds41_decoder_features(const ds41_decoder* d, uint32_t* pos0, uint32
 bool ds41_v41_linear(uint32_t type, const void* w, uint32_t rows, uint32_t k, const float* x, float* out, uint32_t n);
 /* The target's output head and token embedding. */
 bool ds41_decoder_output_head(const ds41_decoder* d, const float* x, float* logits, uint32_t n);
+bool ds41_engine_output_weight(const ds41_engine* engine, uint32_t* type,
+                               const void** dev_ptr, uint32_t* rows,
+                               uint32_t* k);
 bool ds41_decoder_embed(const ds41_decoder* d, const int* tokens, uint32_t n, float* host_rows);
 const float* ds41_decoder_freq_plain(const ds41_decoder* d);

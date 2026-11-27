@@ -3175,6 +3175,23 @@ bool ds41_decoder_output_head(const ds41_decoder* d, const float* x, float* logi
   return linear(d, d->engine->weights->output, x, logits, n);
 }
 
+bool ds41_engine_output_weight(const ds41_engine* engine, uint32_t* type,
+                               const void** dev_ptr, uint32_t* rows,
+                               uint32_t* k) {
+  if (!engine || !engine->model || !engine->weights || !engine->weights->output)
+    return false;
+  const ds41_tensor* w = engine->weights->output;
+  const void* p =
+      ds41_gpu_model_ptr(engine->model->map, w->abs_offset, w->bytes);
+  if (!p || w->dim[0] == 0)
+    return false;
+  *type = w->type;
+  *dev_ptr = p;
+  *k = (uint32_t)w->dim[0];
+  *rows = (uint32_t)(w->elements / w->dim[0]);
+  return true;
+}
+
 bool ds41_decoder_embed(const ds41_decoder* d, const int* tokens, uint32_t n, float* host_rows) {
   const ds41_tensor* embd = d->engine->weights->token_embd;
   const uint64_t row_bytes = embd->bytes / DS41_N_VOCAB;

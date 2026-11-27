@@ -43,7 +43,7 @@ follow in their own sections.
 | 9 | 40 | FP16 Q for prefill attention | ~1% of prefill (E53 estimate) | Write Q in FP16 from the `q_b` epilogue |
 | 10 | 22 | Decode misses after a long prompt | First 64 tokens after a 24K prompt read 2-3× the steady rate | Admission variants over the first 64-256 steps |
 | 11 | 39 | Expert cache seed from served text | Fresh server: 74-78% hits and ~24 ms/token of read wait for the first 64 tokens | Histogram from served chat and code traces |
-| 12 | 38 | Drafter pass | 9.15 ms per drafting cycle (E102), ~0.5 ms less after E102/E103; request-vocabulary head +1.1% greedy in replay (E64) | Drafter expert bytes; vocabulary head |
+| 12 | 38 | Drafter pass | Head + Markov cut 4.07 → 1.30 ms via `Q2_S64` + MALL `Q4_M256` + top-128 exact rerank (E139); remaining body ~3.5 ms (`Q2_K` experts ~1.92 ms at 215–225 GB/s, `Q4_K` dense ~1.05 ms) | Drafter body / multi-job Markov batching |
 | 13 | 19 | Host work and round trips per step | ~0.7 ms per DSpark step (2026-10-29), 0.43-0.49 ms per AR greedy step | Logits download only when needed; device embedding |
 | 14 | 29 | Zero-copy expert reads | ≤ ~1.5% of kernel time at an 88 GiB cap; first version slower | Slack from `STATX_DIOALIGN`, contiguous stage |
 | 15 | 17 | Single-row routed expert GEMV bandwidth | Routed GEMVs at 205-220 GB/s against 240 | ISA mix and spill check |
@@ -208,17 +208,13 @@ request. Matters for benchmarks and short sessions only.
 
 ### 38. Drafter pass
 
-Per drafting cycle (DECODE.md lever 7, table in E102): 9.15 ms, of it the
-target head over the drafted rows 2.58 ms at 210 GB/s, `markov_select`
-1.48 ms at 223 GB/s (E47), the stage Q4_K GEMVs 1.76 ms at 113-181 GB/s
-(~1.25 ms in the bench after E103), drafter experts 1.49 ms (bytes not
-traced) and attention 3 × 41 µs isolated after E102 (not yet re-traced).
-Next: an expert count for the routed share. A
-request-vocabulary head (as Qwen's `draft_vocab.hpp`, with a fallback to
-the full vocabulary after misses; the verifier keeps it) gains +1.1% only
-with the specials and a request table; the id prefix alone loses (E64). It
-needs gathered head and Markov W2 rows, index mapping for argmax, Markov
-and sampled candidates, and per-session tables in batched drafting.
+E139 cut the drafter's head + Markov pass from 4.07 to 1.30 ms (`n = 5`) via a
+draft-only `Q2_S64` screening head (`0.92 ms`, `v_dot2_f32_f16`) and
+MALL-resident `Q4_M256` Markov `W2` (`18.6` vs `66.2 MB`) with top-128 exact
+target-head reranking (`0.38 ms` ×5), leaving ~3.5 ms in the 3-stage drafter
+body (`Q2_K` routed experts ~1.92 ms at 215–225 GB/s, `Q4_K` dense ~1.05 ms,
+attention 3 × 41 µs). Multi-session drafting could share one `Q4_M256` Markov
+read across jobs per slot.
 
 ### 19. Host work and round trips per step
 

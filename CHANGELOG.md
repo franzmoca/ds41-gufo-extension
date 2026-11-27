@@ -3,6 +3,24 @@
 Notable user-facing changes are recorded here. Versions follow `version` in
 [extension.json](extension.json).
 
+## Unreleased
+
+### Performance
+
+* **dspark:** the DSpark drafter now screens candidate tokens through a
+  draft-only `Q2_S64` LM head (`v_dot2_f32_f16`, 186 MB) and MALL-resident
+  `Q4_M256` Markov `W2` table (18.6 vs 66.2 MB, freeing 47.6 MiB; net drafter
+  footprint `+0.13 GiB`) with exact top-128 target-head reranking, cutting
+  head + Markov latency 4.07 → 1.30 ms (`n = 5`, 3.12× faster), caches the
+  noise-token embedding, and updates greedy `verify_ms[w]` proportionally with
+  an 8.0 ms monotonic per-row floor to prevent cold-miss width-5 lock. Greedy
+  replies are bit-identical (104/104): 24 short/long prompts are 4.18% faster
+  (28.33 → 29.51 tok/s, +6.5% to +8.0% at 35K–56K context), 2-way concurrency
+  is 8.36% faster (26.69 → 28.93 agg tok/s), and the 53-request sampled Pi
+  coding-agent replay is 3.26% faster overall (39.02 → 40.29 tok/s; +1.63% on
+  the 31 identical replies, exact `p/q` preserved)
+  ([E139](docs/models/deepseek-v4.1-flash/EXPERIMENTS.md#e139--dspark-q2_s64-screening-head-mall-resident-q4-markov-rerank-and-monotonic-width-policy-retained)).
+
 ## 0.5.1 (2026-11-24)
 
 Built on upstream Gufo `60c48924`; needs extension API 0.3.43 or later.

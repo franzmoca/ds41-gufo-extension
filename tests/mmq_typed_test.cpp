@@ -1148,6 +1148,116 @@ bool RoutedF16Case(const TypeCase& t, int M, int K, int n_tokens, int n_experts,
   return e < 2e-3 && e16 < 2e-3;
 }
 
+// Tests Q2_S64 head quantization, bit-invariance across n = 1..10, Q4_M256
+// Markov W2 quantization, and top-128 exact target-head reranking.
+bool Q2S64MarkovQ4Case(const TypeCase& t, int M, int K, std::mt19937& rng) {
+  const auto w =
+      RandomBlocks(t, static_cast<std::size_t>(M) * K / t.block_values, rng);
+  std::normal_distribution<float> normal;
+  constexpr int N = 5;
+  std::vector<float> x(static_cast<std::size_t>(N) * K);
+  for (auto& v : x)
+    v = normal(rng);
+  constexpr int R = 256;
+  std::vector<uint16_t> w2_h(static_cast<std::size_t>(M) * R);
+  std::vector<float> w2_f(static_cast<std::size_t>(M) * R);
+  for (std::size_t i = 0; i < w2_f.size(); ++i) {
+    const uint16_t h = RandomHalf(rng);
+    w2_h[i] = h;
+    const uint32_t sign = static_cast<uint32_t>(h & 0x8000u) << 16;
+    const uint32_t exp = (h >> 10) & 0x1fu;
+    const uint32_t mant = h & 0x3ffu;
+    const uint32_t bits = sign | ((exp + 112u) << 23) | (mant << 13);
+    std::memcpy(&w2_f[i], &bits, 4);
+  }
+  std::vector<float> mx(R);
+  for (auto& v : mx)
+    v = normal(rng);
+  auto* dw = Device(w);
+  auto* dx = Device(x);
+  auto* dw2 = Device(w2_h);
+  auto* dmx = Device(mx);
+  uint8_t* dq2 = nullptr;
+  uint32_t *d_qs = nullptr, *d_draw = nullptr;
+  uint16_t* d_sc = nullptr;
+  float *y_exact = nullptr, *y_approx5 = nullptr, *y_approx1 = nullptr;
+  int32_t* d_tok = nullptr;
+  ds41_v41_proposal* d_prop = nullptr;
+  void* d_scratch = nullptr;
+  const std::size_t q2_bytes =
+      static_cast<std::size_t>(M) * (K / 256) * DS41_V41_Q2S64_BLOCK_BYTES;
+  const std::vector<uint32_t> draw_vec = {4194304u};
+  bool ok =
+      dw && dx && dw2 && dmx && Alloc(&dq2, q2_bytes) == hipSuccess &&
+      Alloc(&d_qs, static_cast<std::size_t>(M) * 32 * 4) == hipSuccess &&
+      Alloc(&d_sc, static_cast<std::size_t>(M) * 8 * 2) == hipSuccess &&
+      Alloc(&y_exact, static_cast<std::size_t>(M) * N * 4) == hipSuccess &&
+      Alloc(&y_approx5, static_cast<std::size_t>(M) * N * 4) == hipSuccess &&
+      Alloc(&y_approx1, static_cast<std::size_t>(M) * 4) == hipSuccess &&
+      Alloc(&d_tok, 4 * sizeof(int32_t)) == hipSuccess &&
+      Alloc(&d_prop, sizeof(ds41_v41_proposal)) == hipSuccess &&
+      Alloc(&d_scratch, DS41_V41_MARKOV_RERANK_SCRATCH_BYTES) == hipSuccess &&
+      (d_draw = Device(draw_vec)) != nullptr;
+  ok = ok && ds41_v41_quantize_q2s64(t.type, dw, dq2, M, K) == 0 &&
+       ds41_v41_quantize_markov_q4(dw2, d_qs, d_sc, M) == 0 &&
+       ds41_v41_gemv(t.type, dw, dx, y_exact, M, K, 0, 8, N, K, M) == 0 &&
+       ds41_v41_gemv_q2s64(dq2, dx, y_approx5, M, K, N) == 0 &&
+       ds41_v41_gemv_q2s64(dq2, dx + 2 * K, y_approx1, M, K, 1) == 0;
+  bool exact_bit_ok = false, greedy_ok = false, stoch_ok = false;
+  if (ok) {
+    const auto exact = Host(y_exact, static_cast<std::size_t>(M) * N);
+    const auto approx5 = Host(y_approx5, static_cast<std::size_t>(M) * N);
+    const auto approx1 = Host(y_approx1, static_cast<std::size_t>(M));
+    exact_bit_ok = std::memcmp(approx5.data() + static_cast<std::size_t>(2) * M,
+                               approx1.data(), M * sizeof(float)) == 0;
+    // Reference exact_logits[0] + W2_f16 @ mx
+    int32_t ref_arg = 0;
+    float ref_best = -INFINITY;
+    for (int r = 0; r < M; ++r) {
+      double b = 0.0;
+      for (int c = 0; c < R; ++c)
+        b += static_cast<double>(w2_f[static_cast<std::size_t>(r) * R + c]) *
+             mx[c];
+      const float s = exact[r] + static_cast<float>(b);
+      if (s > ref_best) {
+        ref_best = s;
+        ref_arg = r;
+      }
+    }
+    int32_t got_g = -1, got_s = -1;
+    ds41_v41_proposal prop{};
+    if (ds41_v41_markov_q4_rerank(d_qs, d_sc, dmx, y_approx5, t.type, dw, dx, M,
+                                  K, 0, nullptr, 1.0f, d_scratch, nullptr,
+                                  d_tok, 1) == 0 &&
+        ds41_v41_markov_q4_rerank(d_qs, d_sc, dmx, y_approx5, t.type, dw, dx, M,
+                                  K, 1, d_draw, 1.0f, d_scratch, d_prop, d_tok,
+                                  2) == 0) {
+      (void)hipDeviceSynchronize();
+      int32_t toks[4] = {};
+      (void)hipMemcpy(toks, d_tok, sizeof(toks), hipMemcpyDeviceToHost);
+      (void)hipMemcpy(&prop, d_prop, sizeof(prop), hipMemcpyDeviceToHost);
+      got_g = toks[1];
+      got_s = toks[2];
+      greedy_ok = (got_g == ref_arg);
+      stoch_ok =
+          (prop.token >= 0 && prop.token == got_s && prop.ids[0] == ref_arg);
+    }
+  }
+  std::printf("q2s64+markovq4 %-6s M=%d K=%d bit=%s greedy=%s stoch=%s\n",
+              t.name, M, K, exact_bit_ok ? "exact" : "DIFF",
+              greedy_ok ? "ok" : "FAIL", stoch_ok ? "ok" : "FAIL");
+  for (void* p :
+       {static_cast<void*>(dw), static_cast<void*>(dx), static_cast<void*>(dw2),
+        static_cast<void*>(dmx), static_cast<void*>(dq2),
+        static_cast<void*>(d_qs), static_cast<void*>(d_sc),
+        static_cast<void*>(y_exact), static_cast<void*>(y_approx5),
+        static_cast<void*>(y_approx1), static_cast<void*>(d_tok),
+        static_cast<void*>(d_prop), static_cast<void*>(d_draw), d_scratch})
+    if (p)
+      (void)hipFree(p);
+  return ok && exact_bit_ok && greedy_ok && stoch_ok;
+}
+
 }  // namespace
 
 // The vendored SWAR __vcmpne4/__vsub4 match CUDA's per-byte definitions, and
@@ -1213,6 +1323,7 @@ int main(int argc, char** argv) {
         ok = GemvTokensCase(t, 320, 1280, 0, n, rng) && ok;
       }
       ok = SwigluCase(t, 2304, 5120, rng) && ok;
+      ok = Q2S64MarkovQ4Case(t, 1024, 5120, rng) && ok;
     }
     if (t.type != 8 && t.type != 13 && t.type != 14) {
       ok = ExpertGemvCase(t, 2304, 5120, false, rng) && ok;
