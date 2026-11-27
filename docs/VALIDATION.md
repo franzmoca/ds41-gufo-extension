@@ -80,6 +80,22 @@ again.
 
 ## Functional checks
 
+Release 0.6.0, November 27, 2026, on streamed `UD-IQ2_XXS` with the `MXFP8` Engram,
+DSpark and the vision projector, built at Gufo `c14cef2d` and run with Gufo's runner at
+the same revision:
+
+- With two sessions, the `conversation`, `tools`, `long-context`, `cache` (disk restart
+  included) and `image-inputs` suites passed. `tool-images` and `reasoning-budget` fail
+  as in 0.5.1: the text-array replay, and a control case that reasons for 62 tokens.
+- The Pi coding-agent check passed its 8 tasks and `image-read`. Its `tools` task fails
+  2 of 8 runs on both `60c48924` and `c14cef2d`: the model writes `bonjour\n` instead of
+  the exact `bonjour`.
+- The 53-request Pi coding-agent replay gave identical replies and drafts (3,383) in
+  four runs alternating Gufo `60c48924` and `c14cef2d`. Decode took 124.3 s on average
+  on `60c48924` and 124.7 s on `c14cef2d`, within run-to-run variation.
+- A NUL in request text tokenizes as a byte through Gufo's Rust request decoder
+  ([#21](https://github.com/franzmoca/ds41-gufo-extension/issues/21)).
+
 Release 0.5.1, November 24, 2026, on streamed `UD-IQ2_XXS` with the `MXFP8` Engram,
 DSpark and the vision projector, built at Gufo `60c48924` and run with Gufo's runner at
 the same revision:
