@@ -6,8 +6,6 @@
 #include <type_traits>
 #include <hip/hip_runtime.h>
 
-#include <rocwmma/rocwmma.hpp>
-
 #include <algorithm>
 #include <array>
 #include <cmath>

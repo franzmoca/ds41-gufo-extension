@@ -3,6 +3,17 @@
 Notable user-facing changes are recorded here. Versions follow `version` in
 [extension.json](extension.json).
 
+## Unreleased
+
+### Build
+
+* **kernels:** the extension now builds with upstream clang, as in ROCm
+  distributions built on system LLVM (Gentoo, LLVM 23). The BF16 WMMA tiles
+  of the quantized matmul passed `__bf16` vectors, which only ROCm's clang
+  accepts, and an unused rocWMMA include is gone. Builds with ROCm's clang
+  produce the same GPU code
+  ([#25](https://github.com/franzmoca/ds41-gufo-extension/issues/25)).
+
 ## 0.6.0 (2026-11-27)
 
 Built on upstream Gufo `c14cef2d`; needs extension API 0.3.43 or later.
